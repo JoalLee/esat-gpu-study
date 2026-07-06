@@ -1,0 +1,62 @@
+# esat pyproject.toml for setuptools and setuptools-rust
+[build-system]
+requires = ["setuptools >70.0", "setuptools-rust"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "esat"
+version = "2025.0.2"
+requires-python = ">=3.10"
+description = "EPA's Environmental Source Apportionment Toolkit python package."
+authors = [
+    {name = "Deron Smith", email = "smith.deron@epa.gov"},
+    {name = "Mike Cyterski", email = "cyterski.mike@epa.gov"}
+]
+maintainers = [
+    {name = "Deron Smith", email = "smith.deron@epa.gov"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["dependencies"]
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+[project.urls]
+Documentation = "https://quanted.github.io/esat/"
+Repository = "https://github.com/quanted/esat.git"
+Issues = "https://github.com/quanted/esat/issues"
+
+[tool.setuptools]
+package-dir = {"esat" = "esat", "esat_eval" = "eval"}
+include-package-data = true
+
+[tool.cibuildwheel]
+skip = "cp36-* cp37-* cp-38* cp-313* pp37-* *-manylinux_i686 *_ppc64le *_s390x *_universal2 *-musllinux_i686"
+linux.before-all = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
+linux.environment = { PATH="$HOME/.cargo/bin:$PATH" }
+macos.before-all = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
+windows.before-all = "rustup target add aarch64-pc-windows-msvc i686-pc-windows-msvc x86_64-pc-windows-msvc"
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools-rust]
+profile = "release"
+
+[project.scripts]
+esat = "esat.cli.esat_cli:esat_cli"
+
+[[tool.setuptools-rust.ext-modules]]
+target = "esat_rust"
+path = "Cargo.toml"
+binding = "PyO3"
+debug = false
+
+[project.optional-dependencies]
+data = ["scikit-learn"]
