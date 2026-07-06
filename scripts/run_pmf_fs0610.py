@@ -37,10 +37,12 @@ def resolve_path(path: Path) -> Path:
 def validate_model(name: str, model) -> None:
     w64 = np.asarray(model.W, dtype=np.float64)
     h64 = np.asarray(model.H, dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        wh64 = np.matmul(w64, h64)
     checks = {
         f"{name}.W": w64,
         f"{name}.H": h64,
-        f"{name}.WH": np.matmul(w64, h64),
+        f"{name}.WH": wh64,
         f"{name}.Qtrue": np.array([model.Qtrue]),
         f"{name}.Qrobust": np.array([model.Qrobust]),
     }
