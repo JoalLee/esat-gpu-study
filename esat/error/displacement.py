@@ -96,7 +96,8 @@ class Displacement:
             "features": self.features,
             "excluded_features": self.excluded_features,
             "max_search": self.max_search,
-            "threshold_dQ": self.threshold_dQ
+            "threshold_dQ": self.threshold_dQ,
+            "use_gpu": self.use_gpu,
         }
 
     def run(self, batch: int = 1):
@@ -263,11 +264,11 @@ class Displacement:
         W0 = np.abs(V_avg[:, np.newaxis] * rng.standard_normal(size=(n, k)).astype(np.float64))
         W0[W0 <= 0.0] = 1e-12
         W_batch = np.tile(W0, (b, 1, 1))
-        We_arr = (1.0 / self.U.astype(np.float64) ** 2)
-        We_batch = np.tile(We_arr[np.newaxis, :, :], (b, 1, 1))
-        V_batch = np.tile(self.V.astype(np.float64)[np.newaxis, :, :], (b, 1, 1))
+        We_2d = (1.0 / self.U.astype(np.float64) ** 2)
+        V_2d = self.V.astype(np.float64)
         max_iter = self.sa.metadata.get("max_iterations", 20000)
-        result = esat_rust.ls_nmf_batched(V_batch, We_batch, W_batch, H_batch, max_iter, False, True)
+        result = esat_rust.ls_nmf_batched(V_2d, We_2d, W_batch, H_batch, max_iter, False, True)
+        self._backend = result.get("backend", "unknown")
         return result["w"], result["h"], result["q"]
 
     def _increase_disp(self, batch: int = -1):

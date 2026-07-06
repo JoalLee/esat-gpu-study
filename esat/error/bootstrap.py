@@ -436,6 +436,7 @@ class Bootstrap:
             max_iter = self.sa.metadata.get("max_iterations", 20000)
             result = esat_rust.ls_nmf_batched(V_batch, We_batch, W_batch, H_batch,
                                                max_iter, False, True)
+            self.metadata["backend"] = result.get("backend", "unknown")
 
             # Phase 4: unpack results into SA objects
             for i, sa_i in enumerate(all_sas):
