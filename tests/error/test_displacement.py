@@ -2,9 +2,12 @@ import sys, os
 src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.append(src_path)
 import logging
+import copy
+import numpy as np
 from esat.error.displacement import Displacement
 from esat.model.batch_sa import BatchSA
 from esat.data.datahandler import DataHandler
+from esat.metrics import q_loss
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,20 @@ class TestDisplacement:
         disp.run()
         assert disp.compiled_results is not None
         assert len(disp.increase_results) == 6
+
+    def test_single_h_delta_q_matches_full_q_loss(self):
+        selected_model = 1
+        disp = Displacement(sa=self.batch.results[selected_model], feature_labels=self.datahandler.features,
+                            features=[0])
+        for factor_i in (0, 2, 5):
+            for feature_j in (0, 3):
+                for modifier in (0.25, 0.75, 1.5, 3.0):
+                    new_H = copy.copy(disp.H)
+                    new_value = disp.H[factor_i, feature_j] * modifier
+                    new_H[factor_i, feature_j] = new_value
+                    full_q = q_loss(V=disp.V, U=disp.U, W=disp.W, H=new_H)
+                    delta_q = disp._q_for_h_value(factor_i, feature_j, new_value)
+                    assert np.isclose(delta_q, full_q, rtol=1e-10, atol=1e-6)
 
     def test_save(self):
         selected_model = 1

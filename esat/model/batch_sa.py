@@ -11,9 +11,10 @@ from tqdm import tqdm
 import multiprocessing as mp
 from logging.handlers import QueueHandler, QueueListener
 from esat.model.sa import SA
+from esat.model.gpu_batch import run_ls_nmf_batched, weighted_errors_from_uncertainty
 from esat.utils import memory_estimate
 from esat.metrics import q_loss, qr_loss
-from esat_rust import clear_screen, ls_nmf_batched
+from esat_rust import clear_screen
 
 logging.basicConfig(format='%(asctime)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -218,14 +219,15 @@ class BatchSA:
                 all_sas.append(_sa)
 
             # Build 3D batch arrays: V/We as 2D (kernel broadcasts to batch dim)
-            We_2d = np.float64(1.0) / (self.U.astype(np.float64) ** np.float64(2.0))
+            We_2d = weighted_errors_from_uncertainty(self.U)
             W_batch = np.stack([sa.W.astype(np.float64) for sa in all_sas], axis=0)
             H_batch = np.stack([sa.H.astype(np.float64) for sa in all_sas], axis=0)
 
-            result = ls_nmf_batched(
-                self.V.astype(np.float64), We_2d, W_batch, H_batch,
-                self.max_iter, self.hold_h, True
+            result = run_ls_nmf_batched(
+                self.V, W_batch, H_batch, self.max_iter,
+                We=We_2d, hold_h=self.hold_h, prefer_gpu=True
             )
+            backend = result.get("backend", "unknown")
 
             self.results = []
             best_model_0 = -1
@@ -245,6 +247,8 @@ class BatchSA:
                     "completion_date": datetime.datetime.now().strftime("%m/%d/%Y, %H:%M:%S %Z"),
                     "max_iterations": int(self.max_iter),
                     "model_i": int(model_idx),
+                    "use_gpu": bool(self.use_gpu),
+                    "backend": backend,
                 }
                 self.results.append(sa)
                 _nmf_q = sa.Qrobust if self.best_robust else sa.Qtrue

@@ -10,6 +10,7 @@ import multiprocessing as mp
 from tqdm import tqdm
 import plotly.graph_objects as go
 from esat.model.sa import SA
+from esat.model.gpu_batch import run_ls_nmf_batched
 from esat.metrics import qr_loss
 from esat.utils import np_encoder
 from pathlib import Path
@@ -403,7 +404,6 @@ class Bootstrap:
 
         """
         if self.use_gpu:
-            import esat_rust
             # Phase 1: resample all B datasets, create SA objects, initialize
             all_indices = []
             all_sas = []
@@ -434,9 +434,12 @@ class Bootstrap:
 
             # Phase 3: single GPU batched call
             max_iter = self.sa.metadata.get("max_iterations", 20000)
-            result = esat_rust.ls_nmf_batched(V_batch, We_batch, W_batch, H_batch,
-                                               max_iter, False, True)
+            result = run_ls_nmf_batched(
+                V_batch, W_batch, H_batch, max_iter,
+                We=We_batch, hold_h=False, prefer_gpu=True
+            )
             self.metadata["backend"] = result.get("backend", "unknown")
+            self.metadata["use_gpu"] = bool(self.use_gpu)
 
             # Phase 4: unpack results into SA objects
             for i, sa_i in enumerate(all_sas):

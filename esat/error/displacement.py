@@ -13,6 +13,7 @@ from tqdm import tqdm
 from esat.utils import compare_all_factors, np_encoder
 from esat.metrics import q_loss, qr_loss, EPSILON
 from esat.model.sa import SA
+from esat.model.gpu_batch import run_ls_nmf_batched, weighted_errors_from_uncertainty
 
 logging.basicConfig(format='%(asctime)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -73,6 +74,8 @@ class Displacement:
         self.H = self.sa.H + EPSILON
         self.W = self.sa.W
         self.base_Q = self.sa.Qtrue
+        self._search_base_residuals = np.subtract(self.V, np.matmul(self.W, self.H))
+        self._search_base_Q = q_loss(V=self.V, U=self.U, W=self.W, H=self.H)
         self.feature_labels = feature_labels
         self.features = features if features is not None else [i for i in range(len(self.feature_labels))]
         self.excluded_features = set(range(len(self.feature_labels))).difference(set(self.features))
@@ -99,6 +102,16 @@ class Displacement:
             "threshold_dQ": self.threshold_dQ,
             "use_gpu": self.use_gpu,
         }
+
+    def _q_for_h_value(self, factor_i: int, feature_j: int, new_value: float) -> float:
+        """Fast Q update for changing a single H[factor, feature] value."""
+        delta_h = new_value - self.H[factor_i, feature_j]
+        residual_col = self._search_base_residuals[:, feature_j]
+        updated_residual_col = residual_col - (self.W[:, factor_i] * delta_h)
+        inv_u_col = np.float64(1.0) / self.U[:, feature_j].astype(np.float64)
+        old_q_col = np.sum((residual_col * inv_u_col) ** 2)
+        new_q_col = np.sum((updated_residual_col * inv_u_col) ** 2)
+        return float(self._search_base_Q + new_q_col - old_q_col)
 
     def run(self, batch: int = 1):
         """
@@ -253,7 +266,6 @@ class Displacement:
         """Batch-train SA models for DISP tasks via ls_nmf_batched."""
         if not tasks:
             return [], [], []
-        import esat_rust
         H_batch = np.stack([t["new_H"].astype(np.float64) for t in tasks], axis=0)
         b = len(tasks)
         k, m = tasks[0]["new_H"].shape
@@ -264,10 +276,12 @@ class Displacement:
         W0 = np.abs(V_avg[:, np.newaxis] * rng.standard_normal(size=(n, k)).astype(np.float64))
         W0[W0 <= 0.0] = 1e-12
         W_batch = np.tile(W0, (b, 1, 1))
-        We_2d = (1.0 / self.U.astype(np.float64) ** 2)
-        V_2d = self.V.astype(np.float64)
+        We_2d = weighted_errors_from_uncertainty(self.U)
         max_iter = self.sa.metadata.get("max_iterations", 20000)
-        result = esat_rust.ls_nmf_batched(V_2d, We_2d, W_batch, H_batch, max_iter, False, True)
+        result = run_ls_nmf_batched(
+            self.V, W_batch, H_batch, max_iter,
+            We=We_2d, hold_h=False, prefer_gpu=True
+        )
         self._backend = result.get("backend", "unknown")
         return result["w"], result["h"], result["q"]
 
@@ -295,7 +309,7 @@ class Displacement:
                 while not high_found:
                     new_value = self.H[factor_i, feature_j] * high_modifier
                     new_H[factor_i, feature_j] = new_value
-                    disp_i_Q = q_loss(V=self.V, U=self.U, W=self.W, H=new_H)
+                    disp_i_Q = self._q_for_h_value(factor_i, feature_j, new_value)
                     dQ = disp_i_Q - self.base_Q
                     # dQ = np.abs(self.base_Q - disp_i_Q)
                     if dQ < self.dQmax[0]:
@@ -320,7 +334,7 @@ class Displacement:
                         new_H =  copy.copy(self.H)
                         new_value = self.H[factor_i, feature_j] * modifier
                         new_H[factor_i, feature_j] = new_value
-                        disp_i_Q = q_loss(V=self.V, U=self.U, W=self.W, H=new_H)
+                        disp_i_Q = self._q_for_h_value(factor_i, feature_j, new_value)
                         # dQ = np.abs(self.base_Q - disp_i_Q)
                         dQ = disp_i_Q - self.base_Q
                         if dQ > self.dQmax[i]:
@@ -336,15 +350,6 @@ class Displacement:
                             max_dQ = dQ
                         if search_i >= max_high_search:
                             value_found = True
-                    disp_i_sa = SA(V=self.V, U=self.U, factors=self.sa.factors, method=self.sa.method,
-                                   seed=self.sa.seed, verbose=False)
-                    disp_i_sa.initialize(H=new_H)
-                    disp_i_sa.train(max_iter=self.sa.metadata["max_iterations"],
-                                    converge_delta=self.sa.metadata["converge_delta"],
-                                    converge_n=self.sa.metadata["converge_n"],
-                                    model_i=batch,
-                                    robust_mode=False)
-                    factor_swap = compare_all_factors(disp_i_sa.H, self.H)
                     scaled_profiles = new_H / new_H.sum(axis=0)
                     percent = scaled_profiles[factor_i, feature_j]
                     factor_W = self.W[:, factor_i]
@@ -427,7 +432,7 @@ class Displacement:
         while not high_found:
             new_value = self.H[factor_i, feature_j] * high_modifier
             new_H[factor_i, feature_j] = new_value
-            disp_i_Q = q_loss(V=self.V, U=self.U, W=self.W, H=new_H)
+            disp_i_Q = self._q_for_h_value(factor_i, feature_j, new_value)
             dQ = disp_i_Q - self.base_Q
             if dQ < self.dQmax[0]:
                 high_modifier *= 2
@@ -451,7 +456,7 @@ class Displacement:
                 new_H = copy.copy(self.H)
                 new_value = self.H[factor_i, feature_j] * modifier
                 new_H[factor_i, feature_j] = new_value
-                disp_i_Q = q_loss(V=self.V, U=self.U, W=self.W, H=new_H)
+                disp_i_Q = self._q_for_h_value(factor_i, feature_j, new_value)
                 dQ = disp_i_Q - self.base_Q
                 if dQ > self.dQmax[i]:
                     high_modifier = modifier
@@ -513,7 +518,7 @@ class Displacement:
                         new_H =  copy.copy(self.H)
                         new_value = self.H[factor_i, feature_j] * modifier
                         new_H[factor_i, feature_j] = new_value
-                        disp_i_Q = q_loss(V=self.V, U=self.U, W=self.W, H=new_H)
+                        disp_i_Q = self._q_for_h_value(factor_i, feature_j, new_value)
                         dQ = np.abs(self.base_Q - disp_i_Q)
                         if dQ > self.dQmax[i]:
                             low_mod = modifier
@@ -531,15 +536,6 @@ class Displacement:
                         p_mod = modifier
                         if search_i >= max_search_i:
                             value_found = True
-                    disp_i_sa = SA(V=self.V, U=self.U, factors=self.sa.factors, method=self.sa.method,
-                                   seed=self.sa.seed, verbose=False)
-                    disp_i_sa.initialize(H=new_H)
-                    disp_i_sa.train(max_iter=self.sa.metadata["max_iterations"],
-                                    converge_delta=self.sa.metadata["converge_delta"],
-                                    converge_n=self.sa.metadata["converge_n"],
-                                    model_i=batch,
-                                    robust_mode=False)
-                    factor_swap = compare_all_factors(disp_i_sa.H, self.H)
                     scaled_profiles = new_H / new_H.sum(axis=0)
                     percent = scaled_profiles[factor_i, feature_j]
                     factor_W = self.W[:, factor_i]
@@ -628,7 +624,7 @@ class Displacement:
                 new_H = copy.copy(self.H)
                 new_value = self.H[factor_i, feature_j] * modifier
                 new_H[factor_i, feature_j] = new_value
-                disp_i_Q = q_loss(V=self.V, U=self.U, W=self.W, H=new_H)
+                disp_i_Q = self._q_for_h_value(factor_i, feature_j, new_value)
                 dQ = np.abs(self.base_Q - disp_i_Q)
                 if dQ > self.dQmax[i]:
                     low_mod = modifier
