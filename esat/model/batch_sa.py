@@ -271,7 +271,34 @@ class BatchSA:
                             f"Q(true): {float(self.results[best_model_0].Qtrue):.4f}")
             return True, ""
 
-        with mp.Manager() as manager:  # Use Manager to create shared objects
+        if not self.parallel and not self.use_gpu:
+            # Sequential CPU path: no mp.Manager (avoids macOS spawn crash)
+            logger.info("Starting sequential CPU training.")
+            self.results = []
+            best_q = float("inf")
+            best_model_0 = -1
+            for i in range(1, self.models + 1):
+                _seed = self.rng.integers(low=0, high=1e5)
+                _sa = SA(
+                    factors=self.factors, method=self.method,
+                    V=self.V, U=self.U, seed=_seed, verbose=False,
+                )
+                i_H = self.H[i - 1] if self.H is not None and isinstance(self.H, np.ndarray) and self.H.ndim == 3 else self.H
+                i_W = self.W[i - 1] if self.W is not None and isinstance(self.W, np.ndarray) and self.W.ndim == 3 else self.W
+                _sa.initialize(H=i_H, W=i_W, init_method=self.init_method, init_norm=self.init_norm)
+                _sa.train(max_iter=self.max_iter, converge_delta=self.converge_delta,
+                          converge_n=self.converge_n, model_i=i)
+                _nmf_q = _sa.Qrobust if self.best_robust else _sa.Qtrue
+                if _nmf_q < best_q:
+                    best_q = _nmf_q
+                    best_model_0 = i - 1
+                self.results.append(_sa)
+            self.best_model = best_model_0
+            self.runtime = round(time.time() - t0, 2)
+            logger.info(f"Sequential CPU training completed in {self.runtime}s. Best model: {best_model_0 + 1}.")
+            return True, ""
+
+        with mp.Manager() as manager:
             log_queue = manager.Queue()
             progress_queue = manager.Queue() if self.progress_callback else None
 
