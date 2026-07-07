@@ -20,6 +20,11 @@
 ## 第一次使用
 
 建議每個人都用獨立 virtual environment，不要直接裝到系統 Python。
+這個 GPU study branch 的 Python package name 仍然是 `esat`，所以它和
+EPA 官方 PyPI 版 `pip install esat` 會安裝成同一個套件名稱。在同一個
+virtual environment 裡，兩者會互相覆蓋；最乾淨的做法是 EPA 官方版和本 repo
+開發版分別使用不同 `.venv`。如果同仁要摸索這個 GPU branch，建議 clone 本 repo
+後照這份文件 build，而不是在已安裝 EPA 版的環境裡直接覆蓋。
 
 ```bash
 cd /path/to/esat-gpu-study
@@ -116,8 +121,8 @@ python -c 'import numpy as np, esat_rust; V=np.ones((2,3)); We=np.ones((2,3)); W
 | Notebook                                     | 建議用途                                    |
 | -------------------------------------------- | ------------------------------------------- |
 | `notebooks/epa_esat_workflow_01.ipynb`     | 官方 ESAT workflow 參考                     |
-| `notebooks/epa_esat_workflow_01_gpu.ipynb` | GPU 版 workflow 參考                        |
-| `notebooks/bench_cpu_vs_gpu.ipynb`         | CPU/GPU benchmark 探索                      |
+| `notebooks/epa_esat_workflow_01_gpu.ipynb` | GPU 加速完整使用範例，參考官方 `notebooks/epa_esat_workflow_01.ipynb` 改寫 |
+| `notebooks/bench_cpu_vs_gpu.ipynb`         | 可直接運作看看 CPU/GPU 速度差異，輸出會標明 CPU、GPU requested 和實際 backend |
 | `notebooks/epa_esat_simulator_01.ipynb`    | synthetic data simulator 範例               |
 | `notebooks/exp/`                           | 開發探索，不保證乾淨或最新                  |
 | `notebooks/old/`                           | 舊 notebook，除非追歷史，否則不要從這裡開始 |

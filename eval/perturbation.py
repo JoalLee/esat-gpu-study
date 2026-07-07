@@ -114,7 +114,7 @@ class Perturbation:
         Run the uncertainty perturbation analysis
         """
         if self.base_model is None:
-            sa_model = SA(V=self.V, U=self.U, factors=self.factors, seed=self.random_seed, verbose=self.verbose, method=self.method)
+            sa_model = SA(V=self.V, U=self.U, factors=self.factors, seed=self.random_seed, verbose=self.verbose, method=self.method, use_gpu=False)
             sa_model.initialize()
             sa_model.train(max_iter=self.max_iterations, converge_delta=self.converge_delta, converge_n=self.converge_n)
             self.base_model = sa_model
@@ -139,7 +139,7 @@ class Perturbation:
 
     def _parallel_perturb(self, idx, random_seed):
         i_u, i_m = self.perturb(random_seed)
-        i_sa_model = SA(self.V, U=i_u, factors=self.factors, seed=random_seed, verbose=self.verbose, method=self.method)
+        i_sa_model = SA(self.V, U=i_u, factors=self.factors, seed=random_seed, verbose=self.verbose, method=self.method, use_gpu=False)
         i_sa_model.initialize(H=self.base_model.H, W=self.base_model.W)
         i_sa_model.train(model_i=idx, max_iter=self.max_iterations, converge_delta=self.converge_delta, converge_n=self.converge_n)
         return idx, random_seed, i_sa_model, i_m

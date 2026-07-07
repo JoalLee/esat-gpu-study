@@ -1,0 +1,7 @@
+Boot Factors,Base Factor 1,Base Factor 2,Base Factor 3,Base Factor 4,Base Factor 5,Base Factor 6,Unmapped
+Boot Factor 1,2.0,0.0,0.0,0.0,0.0,0.0,0.0
+Boot Factor 2,0.0,2.0,0.0,0.0,0.0,0.0,0.0
+Boot Factor 3,0.0,0.0,2.0,0.0,0.0,0.0,0.0
+Boot Factor 4,0.0,0.0,0.0,2.0,0.0,0.0,0.0
+Boot Factor 5,0.0,0.0,0.0,0.0,2.0,0.0,0.0
+Boot Factor 6,0.0,0.0,0.0,0.0,0.0,2.0,0.0

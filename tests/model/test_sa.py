@@ -62,13 +62,13 @@ class TestSA:
 
     def test_ls_nmf(self):
         factor_n = 6
-        sa = SA(V=self.V, U=self.U, factors=factor_n, method="ls-nmf")
+        sa = SA(V=self.V, U=self.U, factors=factor_n, method="ls-nmf", use_gpu=False)
         sa.initialize()
         sa.train(max_iter=500, converge_delta=1.0, converge_n=10)
         assert sa.WH is not None
         assert sa.Qtrue is not None
 
-        sa2 = SA(V=self.V, U=self.U, factors=factor_n, method="ls-nmf")
+        sa2 = SA(V=self.V, U=self.U, factors=factor_n, method="ls-nmf", use_gpu=False)
         sa2.initialize()
         sa2.train(max_iter=500, converge_delta=1.0, converge_n=10)
         assert sa2.WH is not None
@@ -76,7 +76,7 @@ class TestSA:
 
     def test_optimized(self):
         factor_n = 6
-        sa = SA(V=self.V, U=self.U, factors=factor_n, method="ls-nmf")
+        sa = SA(V=self.V, U=self.U, factors=factor_n, method="ls-nmf", use_gpu=False)
         sa.initialize()
         sa.train(max_iter=500, converge_delta=1.0, converge_n=10)
         assert sa.WH is not None
@@ -85,7 +85,7 @@ class TestSA:
 
     def test_ws_nmf(self):
         factor_n = 6
-        sa = SA(V=self.V, U=self.U, factors=factor_n, method="ws-nmf")
+        sa = SA(V=self.V, U=self.U, factors=factor_n, method="ws-nmf", use_gpu=False)
         sa.initialize()
         sa.train(max_iter=500, converge_delta=1.0, converge_n=10)
         assert sa.WH is not None
@@ -93,7 +93,7 @@ class TestSA:
 
     def test_save(self):
         factor_n = 6
-        sa = SA(V=self.V, U=self.U, factors=factor_n)
+        sa = SA(V=self.V, U=self.U, factors=factor_n, use_gpu=False)
         sa.initialize()
         sa.train(max_iter=500, converge_delta=1.0, converge_n=10)
         save_path = os.path.join(self.data_path, "test_output")

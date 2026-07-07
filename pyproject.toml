@@ -57,6 +57,7 @@ target = "esat_rust"
 path = "Cargo.toml"
 binding = "PyO3"
 debug = false
+features = ["metal"]
 
 [project.optional-dependencies]
 data = ["scikit-learn"]

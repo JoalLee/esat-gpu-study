@@ -282,6 +282,7 @@ class BatchSA:
                 _sa = SA(
                     factors=self.factors, method=self.method,
                     V=self.V, U=self.U, seed=_seed, verbose=False,
+                    use_gpu=False,
                 )
                 i_H = self.H[i - 1] if self.H is not None and isinstance(self.H, np.ndarray) and self.H.ndim == 3 else self.H
                 i_W = self.W[i - 1] if self.W is not None and isinstance(self.W, np.ndarray) and self.W.ndim == 3 else self.W

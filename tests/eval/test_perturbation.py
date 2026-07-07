@@ -9,7 +9,7 @@ def setup_perturbation():
     V = np.random.rand(10, 5)
     U = np.random.rand(10, 5)
     factors = 3
-    base_model = SA(V=V, U=U, factors=factors, seed=42, verbose=False, method="ls-nmf")
+    base_model = SA(V=V, U=U, factors=factors, seed=42, verbose=False, method="ls-nmf", use_gpu=False)
     base_model.initialize()
     base_model.train(max_iter=100, converge_delta=0.001, converge_n=10)
 

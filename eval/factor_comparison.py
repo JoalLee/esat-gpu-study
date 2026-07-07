@@ -579,16 +579,16 @@ class FactorCompareV2:
         for i, p_model in self.correlation_data.items():
             mapping_values = [-1 for i in range(self.factors)]
             if method == "raae":
-                optimal_indices = np.array(p_model["all_raae"]).argmin(axis=0)
                 mapping_matrix = np.array(p_model["all_raae"])
+                optimal_indices = mapping_matrix.argmin(axis=1)
                 maximize = False
             elif method == "emc":
-                optimal_indices = np.array(p_model["all_emc"]).argmax(axis=0)
                 mapping_matrix = np.array(p_model["all_emc"])
+                optimal_indices = mapping_matrix.argmax(axis=1)
                 maximize = True
             else:
-                optimal_indices = np.array(p_model["all_corr"]).argmax(axis=0)
                 mapping_matrix = np.array(p_model["all_corr"])
+                optimal_indices = mapping_matrix.argmax(axis=1)
                 maximize = True
 
             # Step 1, all optimal value indices are unique and no other values need to be checked.
@@ -596,12 +596,14 @@ class FactorCompareV2:
                 model_mapping = optimal_indices
             else:
                 m_bi_matrix = csr_matrix(mapping_matrix)
-                model_mapping = list(min_weight_full_bipartite_matching(m_bi_matrix, maximize=maximize))
+                row_indices, col_indices = min_weight_full_bipartite_matching(m_bi_matrix, maximize=maximize)
+                model_mapping = np.empty(self.factors, dtype=int)
+                model_mapping[row_indices] = col_indices
             optimal_index_tuples = list(zip(list(range(self.factors)), model_mapping))
             for j, oi in enumerate(optimal_index_tuples):
                 ele_values = mapping_matrix[oi]
                 mapping_values[j] = np.round(ele_values, 4)
 
-            batch_mapping[i] = optimal_indices
+            batch_mapping[i] = model_mapping
             batch_values[i] = mapping_values
         return batch_mapping, batch_values
