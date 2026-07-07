@@ -2,6 +2,7 @@ import logging
 import pickle
 import os
 import copy
+import datetime
 import math
 import json
 import numpy as np
@@ -434,11 +435,14 @@ class Bootstrap:
 
             # Phase 3: single GPU batched call
             max_iter = self.sa.metadata.get("max_iterations", 20000)
+            converge_delta = self.sa.metadata.get("converge_delta", 0.1)
+            converge_n = self.sa.metadata.get("converge_n", 100)
             result = run_ls_nmf_batched(
                 V_batch, W_batch, H_batch, max_iter,
                 We=We_batch, hold_h=False, prefer_gpu=True
             )
-            self.metadata["backend"] = result.get("backend", "unknown")
+            backend = result.get("backend", "unknown")
+            self.metadata["backend"] = backend
             self.metadata["use_gpu"] = bool(self.use_gpu)
 
             # Phase 4: unpack results into SA objects
@@ -450,7 +454,18 @@ class Bootstrap:
                 sa_i.Qrobust, _ = qr_loss(V=sa_i.V, U=sa_i.U, W=sa_i.W, H=sa_i.H)
                 sa_i.converged = False
                 sa_i.converge_steps = max_iter
+                sa_i.q_list = [sa_i.Qtrue]
                 model_i = i + 1
+                sa_i.metadata.update({
+                    "completion_date": datetime.datetime.now().strftime("%m/%d/%Y, %H:%M:%S %Z"),
+                    "max_iterations": int(max_iter),
+                    "converge_delta": float(converge_delta),
+                    "converge_n": int(converge_n),
+                    "model_i": int(model_i),
+                    "robust_mode": False,
+                    "use_gpu": bool(self.use_gpu),
+                    "backend": backend,
+                })
 
                 # Phase 5: map factors
                 bs_i_mapping = self.map_contributions(W1=sa_i.W, H1=sa_i.H,
@@ -505,7 +520,7 @@ class Bootstrap:
                 if reuse_seed:
                     train_seed = self.base_seed
                 bs_i_sa = SA(V=bs_data, U=bs_uncertainty, factors=self.factors, method=self.sa.method, seed=train_seed,
-                             verbose=False)
+                             verbose=False, use_gpu=False)
                 bs_i_sa.initialize(H=_H)
                 bs_i_sa.train(max_iter=self.sa.metadata["max_iterations"],
                               converge_delta=self.sa.metadata["converge_delta"],
@@ -538,7 +553,7 @@ class Bootstrap:
         if reuse_seed:
             train_seed = self.base_seed
         bs_i_sa = SA(V=bs_data, U=bs_uncertainty, factors=self.factors, method=self.sa.method, seed=train_seed,
-                     verbose=False)
+                     verbose=False, use_gpu=False)
         bs_i_sa.initialize(H=_H)
         bs_i_sa.train(max_iter=self.sa.metadata["max_iterations"],
                       converge_delta=self.sa.metadata["converge_delta"],

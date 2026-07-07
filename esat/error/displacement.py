@@ -113,6 +113,14 @@ class Displacement:
         new_q_col = np.sum((updated_residual_col * inv_u_col) ** 2)
         return float(self._search_base_Q + new_q_col - old_q_col)
 
+    def _train_params(self):
+        metadata = self.sa.metadata if isinstance(self.sa.metadata, dict) else {}
+        return (
+            int(metadata.get("max_iterations", 20000)),
+            float(metadata.get("converge_delta", 0.1)),
+            int(metadata.get("converge_n", 100)),
+        )
+
     def run(self, batch: int = 1):
         """
         Run the DISP method on the provided SA model.
@@ -277,7 +285,7 @@ class Displacement:
         W0[W0 <= 0.0] = 1e-12
         W_batch = np.tile(W0, (b, 1, 1))
         We_2d = weighted_errors_from_uncertainty(self.U)
-        max_iter = self.sa.metadata.get("max_iterations", 20000)
+        max_iter, _, _ = self._train_params()
         result = run_ls_nmf_batched(
             self.V, W_batch, H_batch, max_iter,
             We=We_2d, hold_h=False, prefer_gpu=True
@@ -368,11 +376,12 @@ class Displacement:
                         })
                     else:
                         disp_i_sa = SA(V=self.V, U=self.U, factors=self.sa.factors, method=self.sa.method,
-                                       seed=self.sa.seed, verbose=False)
+                                       seed=self.sa.seed, verbose=False, use_gpu=False)
                         disp_i_sa.initialize(H=new_H)
-                        disp_i_sa.train(max_iter=self.sa.metadata["max_iterations"],
-                                        converge_delta=self.sa.metadata["converge_delta"],
-                                        converge_n=self.sa.metadata["converge_n"],
+                        max_iter, converge_delta, converge_n = self._train_params()
+                        disp_i_sa.train(max_iter=max_iter,
+                                        converge_delta=converge_delta,
+                                        converge_n=converge_n,
                                         model_i=batch,
                                         robust_mode=False)
                         factor_swap = compare_all_factors(disp_i_sa.H, self.H)
@@ -472,11 +481,12 @@ class Displacement:
                 if search_i >= max_high_search:
                     value_found = True
             disp_i_sa = SA(V=self.V, U=self.U, factors=self.sa.factors, method=self.sa.method,
-                           seed=self.sa.seed, verbose=False)
+                           seed=self.sa.seed, verbose=False, use_gpu=False)
             disp_i_sa.initialize(H=new_H)
-            disp_i_sa.train(max_iter=self.sa.metadata["max_iterations"],
-                            converge_delta=self.sa.metadata["converge_delta"],
-                            converge_n=self.sa.metadata["converge_n"],
+            max_iter, converge_delta, converge_n = self._train_params()
+            disp_i_sa.train(max_iter=max_iter,
+                            converge_delta=converge_delta,
+                            converge_n=converge_n,
                             model_i=model_i)
             factor_swap = compare_all_factors(disp_i_sa.H, self.H)
             scaled_profiles = new_H / new_H.sum(axis=0)
@@ -554,11 +564,12 @@ class Displacement:
                         })
                     else:
                         disp_i_sa = SA(V=self.V, U=self.U, factors=self.sa.factors, method=self.sa.method,
-                                       seed=self.sa.seed, verbose=False)
+                                       seed=self.sa.seed, verbose=False, use_gpu=False)
                         disp_i_sa.initialize(H=new_H)
-                        disp_i_sa.train(max_iter=self.sa.metadata["max_iterations"],
-                                        converge_delta=self.sa.metadata["converge_delta"],
-                                        converge_n=self.sa.metadata["converge_n"],
+                        max_iter, converge_delta, converge_n = self._train_params()
+                        disp_i_sa.train(max_iter=max_iter,
+                                        converge_delta=converge_delta,
+                                        converge_n=converge_n,
                                         model_i=batch,
                                         robust_mode=False)
                         factor_swap = compare_all_factors(disp_i_sa.H, self.H)
@@ -643,11 +654,12 @@ class Displacement:
                 if search_i >= max_search_i:
                     value_found = True
             disp_i_sa = SA(V=self.V, U=self.U, factors=self.sa.factors, method=self.sa.method,
-                           seed=self.sa.seed, verbose=False)
+                           seed=self.sa.seed, verbose=False, use_gpu=False)
             disp_i_sa.initialize(H=new_H)
-            disp_i_sa.train(max_iter=self.sa.metadata["max_iterations"],
-                            converge_delta=self.sa.metadata["converge_delta"],
-                            converge_n=self.sa.metadata["converge_n"],
+            max_iter, converge_delta, converge_n = self._train_params()
+            disp_i_sa.train(max_iter=max_iter,
+                            converge_delta=converge_delta,
+                            converge_n=converge_n,
                             model_i=model_i)
             factor_swap = compare_all_factors(disp_i_sa.H, self.H)
             scaled_profiles = new_H / new_H.sum(axis=0)

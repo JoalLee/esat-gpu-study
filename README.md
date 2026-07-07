@@ -1,6 +1,10 @@
 # Environmental Source Apportionment Toolkit (ESAT)
 Last Update: 04-16-2025
 
+For this GPU study branch, lab members should start with
+[`LAB_REPO_GUIDE.md`](LAB_REPO_GUIDE.md) for the repository map, build commands,
+and common workflow notes.
+
 ## Table of Contents
  - [Description](#description)
  - [Quick Start](#quick-start)

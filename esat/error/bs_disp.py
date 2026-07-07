@@ -109,7 +109,8 @@ class BSDISP:
             "disp-max_search": self.max_search,
             "disp-threshold_dQ": self.threshold_dQ,
             "features": self.features,
-            "seed": self.seed
+            "seed": self.seed,
+            "use_gpu": self.use_gpu,
         }
 
     def run(self,
@@ -170,7 +171,7 @@ class BSDISP:
             for i, bs_key in enumerate(bs_keys):
                 i_model = self.bootstrap.bs_results[bs_key]["model"]
                 i_args = (bs_key, i_model, self.feature_labels, self.model_selected, self.threshold_dQ,
-                          self.max_search, self.features, self.dQmax)
+                          self.max_search, self.features, self.dQmax, self.use_gpu)
                 p_args.append(i_args)
 
             with mp.Pool(processes=cpus) as pool:
@@ -205,11 +206,13 @@ class BSDISP:
         self.__compile_results()
 
     @staticmethod
-    def _parallel_disp(bs_key, bs_model, feature_labels, model_selected, threshold_dQ, max_search, features, dQmax):
+    def _parallel_disp(args):
+        bs_key, bs_model, feature_labels, model_selected, threshold_dQ, max_search, features, dQmax, use_gpu = args
         t0 = time.time()
         logger.info(f"Starting Displacement Stage for BS run {bs_key}.")
         i_disp = Displacement(sa=bs_model, feature_labels=feature_labels, model_selected=model_selected,
-                              threshold_dQ=threshold_dQ, max_search=max_search, features=features, parallel=False)
+                              threshold_dQ=threshold_dQ, max_search=max_search, features=features, parallel=False,
+                              use_gpu=use_gpu)
         i_disp.dQmax = dQmax
         i_disp.run(batch=bs_key)
         t1 = time.time()

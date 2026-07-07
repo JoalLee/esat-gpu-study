@@ -45,6 +45,22 @@ class TestBootstrap:
         assert bs.mapping_df is not None
         assert len(bs.bs_results) == 2
 
+    def test_gpu_run_populates_model_metadata(self):
+        selected_model = 1
+        bs = Bootstrap(sa=self.batch.results[selected_model], feature_labels=self.datahandler.features,
+                       model_selected=selected_model, bootstrap_n=2, block_size=self.datahandler.optimal_block,
+                       parallel=False, threshold=0.6, seed=42, use_gpu=True)
+        bs.run()
+        base_metadata = self.batch.results[selected_model].metadata
+        for bs_result in bs.bs_results.values():
+            model = bs_result["model"]
+            assert model.metadata["max_iterations"] == base_metadata["max_iterations"]
+            assert model.metadata["converge_delta"] == base_metadata["converge_delta"]
+            assert model.metadata["converge_n"] == base_metadata["converge_n"]
+            assert model.metadata["use_gpu"] is True
+            assert "backend" in model.metadata
+            assert model.q_list == [model.Qtrue]
+
     def test_save(self):
         selected_model = 1
         bs = Bootstrap(sa=self.batch.results[selected_model], feature_labels=self.datahandler.features,
