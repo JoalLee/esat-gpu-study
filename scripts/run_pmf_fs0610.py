@@ -150,6 +150,49 @@ def save_matrix_outputs(output_dir: Path, model, features: list[str], times: pd.
     contributions.to_csv(output_dir / "contributions_base.csv", index_label=times.name or "time")
 
 
+def save_all_matrix_outputs(
+    output_dir: Path,
+    batch: BatchSA,
+    features: list[str],
+    times: pd.Index,
+) -> pd.DataFrame:
+    """Save clean profile and contribution matrices for every base model."""
+    rows = []
+    for model_i, model in enumerate(batch.results):
+        if model is None:
+            continue
+
+        model_number = model_i + 1
+        profiles = pd.DataFrame(
+            model.H,
+            index=[f"factor_{i + 1}" for i in range(model.H.shape[0])],
+            columns=features,
+        )
+        contributions = pd.DataFrame(
+            model.W,
+            index=times,
+            columns=[f"factor_{i + 1}" for i in range(model.W.shape[1])],
+        )
+        profiles.to_csv(output_dir / f"profiles_model_{model_number:02d}.csv", index_label="factor")
+        contributions.to_csv(
+            output_dir / f"contributions_model_{model_number:02d}.csv",
+            index_label=times.name or "time",
+        )
+        rows.append(
+            {
+                "model": model_number,
+                "is_best": model_i == batch.best_model,
+                "q_true": float(model.Qtrue),
+                "q_robust": float(model.Qrobust),
+                "backend": model.metadata.get("backend", "unknown"),
+            }
+        )
+
+    summary = pd.DataFrame(rows)
+    summary.to_csv(output_dir / "base_models_summary.csv", index=False)
+    return summary
+
+
 def save_bootstrap_outputs(output_dir: Path, bs: Bootstrap) -> pd.DataFrame:
     rows = []
     for model_i, result in sorted(bs.bs_results.items()):
@@ -188,6 +231,12 @@ def main() -> int:
     parser.add_argument("--missing-sentinel", type=float, default=-900.0)
     parser.add_argument("--missing-uncertainty-scale", type=float, default=4.0)
     parser.add_argument("--use-gpu", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--save-all-models",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Save profile and contribution CSV files for every base model.",
+    )
     args = parser.parse_args()
 
     species_path = resolve_path(args.species)
@@ -225,6 +274,9 @@ def main() -> int:
     base_model = batch.results[best_model_idx]
     validate_model("base_model", base_model)
     save_matrix_outputs(output_dir, base_model, features, times)
+    all_models_summary = None
+    if args.save_all_models:
+        all_models_summary = save_all_matrix_outputs(output_dir, batch, features, times)
 
     bs = None
     bootstrap_seconds = 0.0
@@ -273,6 +325,7 @@ def main() -> int:
             "backend": base_model.metadata.get("backend", "unknown"),
             "q_true": float(base_model.Qtrue),
             "q_robust": float(base_model.Qrobust),
+            "all_models_saved": bool(args.save_all_models),
         },
         "bootstrap": {
             "seconds": float(bootstrap_seconds),
@@ -288,6 +341,9 @@ def main() -> int:
         "outputs": {
             "profiles_base": "profiles_base.csv",
             "contributions_base": "contributions_base.csv",
+            "all_models_summary": "base_models_summary.csv" if all_models_summary is not None else None,
+            "all_model_profiles": "profiles_model_XX.csv" if all_models_summary is not None else None,
+            "all_model_contributions": "contributions_model_XX.csv" if all_models_summary is not None else None,
             "bootstrap_q": "bootstrap_q.csv" if args.bootstrap_runs else None,
             "bootstrap_mapping": "bootstrap_mapping.csv" if args.bootstrap_runs else None,
         },
