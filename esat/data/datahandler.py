@@ -79,6 +79,8 @@ class DataHandler:
         self.input_data_plot = None
         self.uncertainty_data_plot = None
         self.max_plotting_n = max_plotting_n
+        self._agg_group_ids = None
+        self._agg_index = None
 
         self.sn_mask = None
         self.sn_threshold = sn_threshold
@@ -283,13 +285,13 @@ class DataHandler:
         """
         Sets the processed input and uncertainty datasets.
         """
-        # Drop columns if specified
+        _input_data = self.input_data.copy()
+        _uncertainty_data = self.uncertainty_data.copy()
+
+        # Remove metadata columns before enforcing the numeric model-input contract.
         if self.drop_col is not None:
-            _input_data = copy.copy(self.input_data.drop(labels=self.drop_col, axis=1)).astype("float32")
-            _uncertainty_data = copy.copy(self.uncertainty_data.drop(labels=self.drop_col, axis=1)).astype("float32")
-        else:
-            _input_data = copy.copy(self.input_data).astype("float32")
-            _uncertainty_data = copy.copy(self.uncertainty_data).astype("float32")
+            _input_data = _input_data.drop(labels=self.drop_col, axis=1)
+            _uncertainty_data = _uncertainty_data.drop(labels=self.drop_col, axis=1)
 
         # Drop location columns if specified
         if self.loc_cols is not None:
@@ -319,11 +321,10 @@ class DataHandler:
             _input_data[f] = pd.to_numeric(_input_data[f])
             _uncertainty_data[f] = pd.to_numeric(_uncertainty_data[f])
 
-        # Ensure no zero values in data or uncertainty
-        _input_nans = _input_data.isna().any(axis=1)
-        _uncertainty_nans = _uncertainty_data.isna().any(axis=1)
-        _input_data = _input_data[~_input_nans | ~_uncertainty_nans]
-        _uncertainty_data = _uncertainty_data[~_input_nans | ~_uncertainty_nans]
+        if self.drop_nans:
+            invalid_rows = _input_data.isna().any(axis=1) | _uncertainty_data.isna().any(axis=1)
+            _input_data = _input_data.loc[~invalid_rows]
+            _uncertainty_data = _uncertainty_data.loc[~invalid_rows]
 
         self.input_data_df = _input_data
         self.uncertainty_data_df = _uncertainty_data
@@ -386,21 +387,30 @@ class DataHandler:
             self.uncertainty_data = self._read_data(filepath=self.uncertainty_path, index_col=self.index_col)
             self.features = list(self.input_data.columns) if self.features is None else self.features
 
+        if not self.input_data.columns.equals(self.uncertainty_data.columns):
+            raise ValueError("Input and uncertainty data must have identical columns in the same order")
+        if not self.input_data.index.equals(self.uncertainty_data.index):
+            raise ValueError("Input and uncertainty data must use the same row index")
+
         # drop rows were all values are NaN, by creating a mask to use on both input and uncertainty
         nan_rows = self.input_data.isna().all(axis=1) | self.uncertainty_data.isna().all(axis=1)
         self.input_data = self.input_data[~nan_rows]
         self.uncertainty_data = self.uncertainty_data[~nan_rows]
 
-        self.min_values = self.input_data.min(axis=0)
-        self.max_values = self.input_data.max(axis=0)
+        numeric_columns = self.input_data.select_dtypes(include=[np.number]).columns.intersection(
+            self.uncertainty_data.select_dtypes(include=[np.number]).columns,
+            sort=False,
+        )
+        c_df = self.input_data.loc[:, numeric_columns]
+        u_df = self.uncertainty_data.loc[:, numeric_columns]
 
-        c_df = self.input_data.copy()
-        u_df = self.uncertainty_data.copy()
+        self.min_values = c_df.min(axis=0)
+        self.max_values = c_df.max(axis=0)
 
         min_con = c_df.min()
-        p25 = c_df.quantile(q=0.25, numeric_only=True)
-        median_con = c_df.median(numeric_only=True)
-        p75 = c_df.quantile(q=0.75, numeric_only=True)
+        p25 = c_df.quantile(q=0.25)
+        median_con = c_df.median()
+        p75 = c_df.quantile(q=0.75)
         max_con = c_df.max()
 
         d = (c_df - u_df).divide(u_df, axis=0)
@@ -422,7 +432,13 @@ class DataHandler:
         Sets the self.optimal_block parameter by taking the average value of b_star_cb of each feature.
         """
         if input_data is None:
-            input_data = self.input_data.to_numpy()
+            input_data = self.input_data.select_dtypes(include=[np.number]).to_numpy()
+        if input_data.shape[1] == 0:
+            self.optimal_block = 0
+            return
+        if input_data.shape[0] < 3 or not np.isfinite(input_data).all():
+            self.optimal_block = max(1, int(input_data.shape[1] / 5))
+            return
         try:
             with np.errstate(divide='ignore', invalid='ignore'):
                 optimal_blocks = optimal_block_length(input_data)
@@ -431,60 +447,81 @@ class DataHandler:
                     optimal_block.append(opt.b_star_cb)
                 self.optimal_block = math.floor(np.mean(optimal_block))
         except ValueError as e:
-            self.optimal_block = int(input_data.shape[1]/5)
+            self.optimal_block = max(1, int(input_data.shape[1] / 5))
             logger.error(f"Unable to determine optimal block size. Setting default to {self.optimal_block}")
 
     def _aggregate_data(self):
         """
-        Aggregate input and uncertainty data for plotting if sample count exceeds max_plotting_n.
-        Stores aggregation bins/labels for reuse.
+        Aggregate input and uncertainty data into shared sequential row bins.
+
+        Every feature and later model output must use the same groups so that
+        observed values, uncertainties, reconstructions, and timestamps remain
+        aligned for plotting and residual calculations.
         """
-        self._agg_bins = {}
-        self._agg_labels = {}
+        self._agg_group_ids = None
+        self._agg_index = None
         if self.input_data is None or self.uncertainty_data is None:
             self.input_data_plot = None
             self.uncertainty_data_plot = None
             return
         n_samples = len(self.input_data)
+        if n_samples != len(self.uncertainty_data):
+            raise ValueError("Input and uncertainty data must contain the same number of rows")
+        if not self.input_data.index.equals(self.uncertainty_data.index):
+            raise ValueError("Input and uncertainty data must use the same row index")
+
+        source_index = self.input_data.index
         if n_samples <= self.max_plotting_n:
-            self.input_data_plot = self.input_data
-            self.uncertainty_data_plot = self.uncertainty_data
+            self._agg_group_ids = np.arange(n_samples, dtype=np.int64)
+            self._agg_index = source_index.copy()
+            self.input_data_plot = self.input_data.copy()
+            self.uncertainty_data_plot = self.uncertainty_data.copy()
             return
-        bins = np.linspace(0, 1, self.max_plotting_n + 1)
-        agg_input = pd.DataFrame()
-        agg_uncertainty = pd.DataFrame()
-        for col in self.input_data.columns:
-            quantiles = self.input_data[col].quantile(bins)
-            labels = range(self.max_plotting_n)
-            binned = pd.cut(self.input_data[col], quantiles, labels=labels, include_lowest=True, duplicates='drop')
-            agg_input[col] = self.input_data.groupby(binned, observed=True)[col].mean().reset_index(drop=True)
-            agg_uncertainty[col] = self.uncertainty_data.groupby(binned, observed=True)[col].mean().reset_index(
-                drop=True)
-            self._agg_bins[col] = quantiles
-            self._agg_labels[col] = labels
-        self.V_prime_plot = agg_input
+
+        group_ids = np.floor(
+            np.arange(n_samples, dtype=np.float64) * self.max_plotting_n / n_samples
+        ).astype(np.int64)
+        group_ids = np.minimum(group_ids, self.max_plotting_n - 1)
+        self._agg_group_ids = group_ids
+
+        first_positions = np.flatnonzero(
+            np.concatenate(([True], group_ids[1:] != group_ids[:-1]))
+        )
+        self._agg_index = source_index.take(first_positions)
+
+        input_values = self.input_data.reset_index(drop=True)
+        uncertainty_values = self.uncertainty_data.reset_index(drop=True)
+        agg_input = input_values.groupby(group_ids, sort=True).mean()
+        agg_uncertainty = uncertainty_values.groupby(group_ids, sort=True).mean()
+        agg_input.index = self._agg_index
+        agg_uncertainty.index = self._agg_index
+
+        self.input_data_plot = agg_input
         self.uncertainty_data_plot = agg_uncertainty
-        logger.info(f"Aggregated data for plotting: {n_samples} samples reduced to {self.max_plotting_n} samples.")
+        logger.info(
+            f"Aggregated data for plotting: {n_samples} samples reduced to {len(self._agg_index)} samples."
+        )
 
     def aggregate_output(self, output_array: np.ndarray) -> pd.DataFrame:
         """
         Aggregate an output numpy array using the same bins/labels as used in _aggregate_data.
         Returns a pandas DataFrame.
         """
-        if not hasattr(self, "_agg_bins") or not hasattr(self, "_agg_labels"):
-            logger.error("No aggregation bins/labels found. Run _aggregate_data first.")
-            # Fallback: return as DataFrame with feature names
-            return pd.DataFrame(output_array, columns=self.features)
-        # Convert array to DataFrame with correct columns
+        if self._agg_group_ids is None or self._agg_index is None:
+            raise RuntimeError("No aggregation groups found. Run _aggregate_data first.")
+
         output_df = pd.DataFrame(output_array, columns=self.features)
-        agg_output = pd.DataFrame()
-        for col in output_df.columns:
-            if col in self._agg_bins:
-                binned = pd.cut(output_df[col], self._agg_bins[col], labels=self._agg_labels[col], include_lowest=True,
-                                duplicates='drop')
-                agg_output[col] = output_df.groupby(binned, observed=True)[col].mean().reset_index(drop=True)
-            else:
-                agg_output[col] = output_df[col]
+        if len(output_df) != len(self._agg_group_ids):
+            raise ValueError(
+                "Model output row count must match the data used to build aggregation groups"
+            )
+
+        if len(self._agg_index) == len(output_df):
+            output_df.index = self._agg_index
+            return output_df
+
+        agg_output = output_df.groupby(self._agg_group_ids, sort=True).mean()
+        agg_output.index = self._agg_index
         return agg_output
 
     def plot_data_uncertainty(self, show: bool = True, include_menu: bool = True, feature_idx: int = None):
@@ -642,7 +679,7 @@ class DataHandler:
 
         """
         if type(feature_selection) is int:
-            feature_selection = feature_selection % self.input_data_plot.shape[0]
+            feature_selection = feature_selection % self.input_data_plot.shape[1]
             feature_selection = self.input_data_plot.columns[feature_selection]
             feature_label = [feature_selection]
         else:
@@ -899,4 +936,5 @@ class DataHandler:
         dh.features = input_df.columns
         dh._load_data(existing_data=True)
         dh._determine_optimal_block()
+        dh._aggregate_data()
         return dh

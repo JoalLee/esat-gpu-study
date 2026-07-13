@@ -361,7 +361,7 @@ class BatchSA:
                         input_parameters.append((
                             _sa, i, progress_queue, log_queue,
                             self.max_iter, self.converge_delta, self.converge_n,
-                            self.update_step, self.hold_h, self.delay_h, self.progress_callback
+                            self.update_step, self.hold_h, self.delay_h, None
                         ))
                     logger.info("Input parameters for multiprocessing prepared.")
 

@@ -37,9 +37,12 @@ def test_impute_supported_strategies(handler_with_nans, df_with_nans, strategy):
     if strategy == 'most_frequent':
         imputer.impute(strategy=strategy)
         assert imputer.imputed_data['C'].iloc[0] == 'x'
+        assert imputer.imputed_data['C'].iloc[3] == 'x'
     else:
         imputer.impute(strategy=strategy)
         assert not imputer.imputed_data[['A', 'B', 'D']].isnull().any().any()
+    assert imputer.imputed_data.columns.equals(df_with_nans.columns)
+    assert imputer.imputed_uncertainty.columns.equals(df_with_nans.columns)
 
 def test_impute_invalid_strategy(handler_with_nans):
     imputer = DataImputer(handler_with_nans)
@@ -47,28 +50,15 @@ def test_impute_invalid_strategy(handler_with_nans):
         imputer.impute(strategy='unsupported')
 
 def test_impute_extra_column(df_with_nans, df_uncertainty):
-    handler = DataHandler.load_dataframe(df_with_nans, df_uncertainty)
-    imputer = DataImputer(handler)
-    imputer.impute(strategy='mean')
     df_extra = df_with_nans.copy()
     df_extra['E'] = [1, 2, 3, 4, 5, 6]
-    df_uncertainty_extra = df_uncertainty.copy()
-    df_uncertainty_extra['E'] = [0.01] * 6
-    handler_extra = DataHandler.load_dataframe(df_extra, df_uncertainty_extra)
-    imputer_extra = DataImputer(handler_extra)
-    with pytest.raises(ValueError):
-        imputer_extra.impute(strategy='mean')
+    with pytest.raises(ValueError, match="identical columns"):
+        DataHandler.load_dataframe(df_extra, df_uncertainty)
 
 def test_impute_missing_column(df_with_nans, df_uncertainty):
-    handler = DataHandler.load_dataframe(df_with_nans, df_uncertainty)
-    imputer = DataImputer(handler)
-    imputer.impute(strategy='mean')
     df_missing = df_with_nans.drop(columns=['A'])
-    df_uncertainty_missing = df_uncertainty.drop(columns=['A'])
-    handler_missing = DataHandler.load_dataframe(df_missing, df_uncertainty_missing)
-    imputer_missing = DataImputer(handler_missing)
-    with pytest.raises(ValueError):
-        imputer_missing.impute(strategy='mean')
+    with pytest.raises(ValueError, match="identical columns"):
+        DataHandler.load_dataframe(df_missing, df_uncertainty)
 
 def test_impute_without_handler():
     with pytest.raises(TypeError):

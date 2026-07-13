@@ -64,10 +64,8 @@ class ModelAnalysis:
             # Use DataHandler's aggregation for consistent plotting
             agg_df = self.dh.aggregate_output(V_prime_k)
             factor_agg[k] = agg_df
-        # sum of aggregated factors, into v_prime (same dimensions as V)
-        factor_vprime = sum([agg_df.values for agg_df in factor_agg.values()])
-        factor_vprime = pd.DataFrame(factor_vprime, columns=self.dh.input_data_df.columns,
-                                     index=self.dh.input_data_df.index)
+        # Sum aligned DataFrames so the shared aggregated time index is retained.
+        factor_vprime = sum(factor_agg.values())
         self.V_prime_plot = factor_vprime
         self.V_prime_k = factor_agg
         return factor_agg, factor_vprime
@@ -950,8 +948,10 @@ class BatchAnalysis:
         q_fig = go.Figure()
         for i, result in enumerate(self.batch_sa.results):
             if result is not None:
+                q_list_len = len(result.q_list)
+                mode = 'lines' if q_list_len > 1 else 'markers'
                 q_fig.add_trace(
-                    go.Scatter(x=list(range(len(result.q_list))), y=result.q_list, name=f"Model {i + 1}", mode='lines'))
+                    go.Scatter(x=list(range(q_list_len)), y=result.q_list, name=f"Model {i + 1}", mode=mode))
         q_fig.update(layout_title_text=f"Batch Q(True) vs Iterations. Max Iterations: {self.batch_sa.max_iter}")
         q_fig.update_layout(width=1200, height=600, hovermode='x')
         q_fig.update_xaxes(title_text="Iterations")
@@ -1035,7 +1035,7 @@ class BatchAnalysis:
             if self.data_handler is not None:
                 if not isinstance(V_prime, pd.DataFrame):
                     V_prime = pd.DataFrame(V_prime, columns=self.data_handler.features, index=x)
-                y_res = V[:, col_idx] - V_prime[feature_label].values
+                y_res = V[:, col_idx] - V_prime[feature_label].to_numpy()
             else:
                 y_res = V[:, col_idx] - V_prime[:, col_idx]
             visible = True if i == self.batch_sa.best_model else "legendonly"
