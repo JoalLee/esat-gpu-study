@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pytest
+          python -m pip install numpy==2.2.6 scipy==1.15.3 pytest==9.1.1
       - name: Compile prototype modules
         run: |
           python -m py_compile \
