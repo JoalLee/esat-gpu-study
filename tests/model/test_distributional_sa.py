@@ -35,8 +35,6 @@ def test_distributional_sa_static_limit_is_well_behaved():
     np.testing.assert_allclose(model.H_bar.sum(axis=1), 1.0, atol=1e-8)
     np.testing.assert_allclose(model.H_local.sum(axis=2), 1.0, atol=1e-8)
 
-    # A very strong shrinkage penalty should recover the intended static
-    # special case rather than inventing substantial profile variability.
     assert float(np.max(model.profile_rms_variability)) < 0.01
     assert model.objective <= model.objective_history[0] + 1e-8
     assert np.isfinite(model.q_true)
@@ -108,3 +106,41 @@ def test_result_snapshot_exposes_distributional_outputs():
     assert result.profile_rms_variability.shape == (2,)
     assert result.reconstruction.shape == synthetic.data.shape
     assert np.isfinite(result.objective)
+
+
+def test_masked_cell_has_exactly_zero_data_influence():
+    synthetic = DistributionalSimulator(
+        seed=29,
+        factors_n=2,
+        features_n=6,
+        samples_n=35,
+        variability=0.1,
+        noise_fraction=0.02,
+    ).generate()
+
+    mask = np.ones_like(synthetic.data, dtype=bool)
+    mask[5, 3] = False
+
+    baseline_data = synthetic.data.copy()
+    altered_data = synthetic.data.copy()
+    altered_data[5, 3] = 1e6
+
+    kwargs = dict(
+        U=synthetic.uncertainty,
+        factors=2,
+        observation_mask=mask,
+        profile_penalty=2.0,
+        seed=29,
+        init_iter=100,
+        max_iter=5,
+        profile_steps=3,
+    )
+    baseline = DistributionalSA(V=baseline_data, **kwargs).fit()
+    altered = DistributionalSA(V=altered_data, **kwargs).fit()
+
+    assert baseline.We[5, 3] == 0.0
+    assert altered.We[5, 3] == 0.0
+    np.testing.assert_allclose(baseline.H_bar, altered.H_bar, atol=1e-10)
+    np.testing.assert_allclose(baseline.W, altered.W, atol=1e-10)
+    np.testing.assert_allclose(baseline.H_local, altered.H_local, atol=1e-10)
+    assert abs(baseline.q_true - altered.q_true) < 1e-10
