@@ -1,23 +1,20 @@
 """Distributional source-type factorization for receptor modeling.
 
-This module implements an initial research prototype that generalizes the
-standard ESAT factorization ``V ~= W @ H``.  Instead of representing each
-factor/source type by one fixed profile ``H[k]``, the model uses a global
-archetype ``H_bar[k]`` and a local profile realization ``H_local[t, k]`` for
-each sample::
+This module generalizes the standard ESAT factorization ``V ~= W @ H``. Instead
+of representing each factor/source type by one fixed profile ``H[k]``, the
+model uses a global archetype ``H_bar[k]`` and a local profile realization
+``H_local[t, k]`` for each sample::
 
     V[t, j] ~= sum_k W[t, k] * H_local[t, k, j]
 
 Local profiles are constrained to the probability simplex and are shrunk
-toward the global archetype with a factor-specific quadratic penalty.  The
-archetypes are learned from the receptor data; no source labels or reference
-profiles are required.
+toward the global archetype. Archetypes are learned from receptor data; no
+source labels or reference profiles are required.
 
-This is deliberately a penalized/MAP-like MVP rather than a claim of full
-Bayesian posterior inference.  Its purpose is to test the methodological
-hypothesis that a recurrent source/process type may be better represented by a
-bounded family of profiles than by either one fixed profile or one serially
-continuous profile trajectory.
+The implementation is deliberately a penalized/MAP-like research prototype,
+not a claim of full Bayesian posterior inference. Missing receptor cells can be
+excluded explicitly with ``observation_mask`` rather than represented by
+artificial zero observations with merely enlarged uncertainty.
 """
 
 from __future__ import annotations
@@ -35,12 +32,7 @@ _EPS = 1e-12
 
 
 def _project_simplex_rows(values: np.ndarray) -> np.ndarray:
-    """Project every row of a 2-D array onto the unit simplex.
-
-    Uses the sorting-based Euclidean projection of Duchi et al.  The returned
-    rows are non-negative and sum to one (up to floating-point precision).
-    """
-
+    """Project every row of a 2-D array onto the unit simplex."""
     x = np.asarray(values, dtype=np.float64)
     if x.ndim != 2:
         raise ValueError("simplex projection expects a 2-D array")
@@ -86,39 +78,30 @@ class DistributionalSA:
     Parameters
     ----------
     V
-        Receptor data with shape ``(samples, features)``.  V1 assumes
-        non-negative values and no NaNs, matching LS-NMF.
+        Non-negative receptor data, shape ``(samples, features)``. Cells marked
+        false in ``observation_mask`` may contain placeholder finite values;
+        they receive exactly zero reconstruction weight.
     U
-        Measurement uncertainty with the same shape as ``V``.  Values must be
-        positive.  The reconstruction term uses ``1 / U**2`` weights.
+        Positive measurement uncertainty with the same shape as ``V``.
     factors
         Number of latent source/process types.
+    observation_mask
+        Optional boolean matrix with the same shape as ``V``. ``True`` means
+        the receptor cell is observed and contributes to the weighted loss;
+        ``False`` means the cell is missing/excluded and its weight is exactly
+        zero. If omitted, every cell is observed.
     profile_penalty
-        Dimensionless shrinkage strength for local profiles.  It can be a
-        scalar or one value per factor.  Larger values make
-        ``H_local[t, k]`` stay closer to the learned global archetype
-        ``H_bar[k]``.  As the penalty grows, the model approaches a static
-        profile factorization.
-    seed
-        Random seed used for the static LS-NMF initialization.
-    init_iter
-        Number of LS-NMF multiplicative-update steps used to initialize the
-        factorization before introducing local profile variability.
-    max_iter
-        Maximum number of outer alternating-optimization iterations.
-    profile_steps
-        Projected-gradient steps used to update each sample's local profile
-        matrix per outer iteration.
-    tol
-        Relative objective-change convergence threshold.
+        Dimensionless shrinkage strength for local profiles. It can be a scalar
+        or one value per factor. Larger values approach the static-profile
+        special case.
+    seed, init_iter, max_iter, profile_steps, tol
+        Optimization settings.
 
     Notes
     -----
-    Profiles are normalized across the modeled features so that each
-    archetype/local profile row lies on the simplex.  Consequently ``W`` is a
-    scale/contribution in the *modeled feature space*.  It should only be
-    interpreted as total aerosol mass when the selected features support that
-    mass-balance interpretation.
+    Profiles are normalized across modeled features. Consequently ``W`` is a
+    contribution scale in the modeled feature space; it is only total aerosol
+    mass when the chosen features support that physical interpretation.
     """
 
     def __init__(
@@ -126,6 +109,7 @@ class DistributionalSA:
         V: np.ndarray,
         U: np.ndarray,
         factors: int,
+        observation_mask: np.ndarray | None = None,
         profile_penalty: float | Iterable[float] = 10.0,
         seed: int = 42,
         init_iter: int = 1000,
@@ -142,9 +126,15 @@ class DistributionalSA:
         self.max_iter = int(max_iter)
         self.profile_steps = int(profile_steps)
         self.tol = float(tol)
+        self.observation_mask = (
+            np.ones(self.V.shape, dtype=bool)
+            if observation_mask is None
+            else np.asarray(observation_mask, dtype=bool)
+        )
 
         self._validate_inputs()
-        self.We = 1.0 / np.maximum(self.U, _EPS) ** 2
+        base_weight = 1.0 / np.maximum(self.U, _EPS) ** 2
+        self.We = np.where(self.observation_mask, base_weight, 0.0)
         self.samples, self.features = self.V.shape
 
         self.W: np.ndarray | None = None
@@ -167,12 +157,14 @@ class DistributionalSA:
             raise ValueError("V and U must both be 2-D arrays")
         if self.V.shape != self.U.shape:
             raise ValueError("V and U must have identical shapes")
+        if self.observation_mask.shape != self.V.shape:
+            raise ValueError("observation_mask must have the same shape as V")
         if self.V.size == 0:
             raise ValueError("V and U cannot be empty")
         if not np.isfinite(self.V).all() or not np.isfinite(self.U).all():
             raise ValueError("V and U cannot contain NaN or infinite values")
         if np.any(self.V < 0.0):
-            raise ValueError("DistributionalSA V1 requires non-negative V")
+            raise ValueError("DistributionalSA requires non-negative V")
         if np.any(self.U <= 0.0):
             raise ValueError("U must contain strictly positive uncertainties")
         if self.factors < 1:
@@ -183,13 +175,32 @@ class DistributionalSA:
             raise ValueError("iteration counts must be non-negative/positive")
         if self.tol <= 0.0:
             raise ValueError("tol must be > 0")
+        if not np.any(self.observation_mask):
+            raise ValueError("observation_mask cannot exclude every receptor cell")
+
+    def _observed_means(self) -> tuple[np.ndarray, np.ndarray]:
+        """Feature- and sample-wise means excluding explicitly masked cells."""
+        mask = self.observation_mask.astype(np.float64)
+        feature_count = mask.sum(axis=0)
+        sample_count = mask.sum(axis=1)
+        feature_mean = np.divide(
+            (self.V * mask).sum(axis=0),
+            feature_count,
+            out=np.full(self.V.shape[1], 1e-8, dtype=np.float64),
+            where=feature_count > 0,
+        )
+        sample_mean = np.divide(
+            (self.V * mask).sum(axis=1),
+            sample_count,
+            out=np.full(self.V.shape[0], 1e-8, dtype=np.float64),
+            where=sample_count > 0,
+        )
+        return np.maximum(feature_mean, 1e-8), np.maximum(sample_mean, 1e-8)
 
     def _static_initialize(self) -> tuple[np.ndarray, np.ndarray]:
-        """Initialize W/H with the existing ESAT LS-NMF update equations."""
-
+        """Initialize W/H with existing ESAT LS-NMF weighted updates."""
         rng = np.random.default_rng(self.seed)
-        vh_mean = np.maximum(np.mean(self.V, axis=0), 1e-8)
-        vw_mean = np.maximum(np.mean(self.V, axis=1), 1e-8)
+        vh_mean, vw_mean = self._observed_means()
 
         h_scale = np.sqrt(vh_mean / self.factors)
         w_scale = np.sqrt(vw_mean / self.factors)
@@ -209,8 +220,6 @@ class DistributionalSA:
             W = np.maximum(W, _EPS)
             H = np.maximum(H, _EPS)
 
-        # Fix the W/H scale ambiguity: H rows become compositional profiles,
-        # and their previous row sums are absorbed into W.  This preserves WH.
         row_scale = np.maximum(H.sum(axis=1), _EPS)
         H_bar = H / row_scale[:, None]
         W = W * row_scale[None, :]
@@ -227,19 +236,21 @@ class DistributionalSA:
         if np.any(raw < 0.0):
             raise ValueError("profile_penalty cannot contain negative values")
 
-        # Convert the dimensionless user penalty to the scale of the weighted
-        # reconstruction curvature after static initialization.  This makes a
-        # value such as 1 or 10 more portable across datasets with different U.
-        weight_scale = float(np.median(self.We))
+        positive_weights = self.We[self.We > 0.0]
+        weight_scale = (
+            float(np.median(positive_weights)) if positive_weights.size else 1.0
+        )
         contribution_scale = np.maximum(np.mean(W**2, axis=0), 1e-8)
         return raw * max(weight_scale, 1e-8) * contribution_scale
 
     def _update_contributions(self) -> None:
         """Weighted NNLS update of W with local profiles fixed."""
-
         assert self.W is not None and self.H_local is not None
         for t in range(self.samples):
             sqrt_weight = np.sqrt(self.We[t])
+            if not np.any(sqrt_weight > 0.0):
+                self.W[t] = 0.0
+                continue
             design = self.H_local[t].T * sqrt_weight[:, None]
             target = self.V[t] * sqrt_weight
             solution, _ = nnls(design, target)
@@ -247,7 +258,6 @@ class DistributionalSA:
 
     def _update_local_profiles(self) -> None:
         """Projected-gradient update of H_local with W/archetypes fixed."""
-
         assert self.W is not None
         assert self.H_bar is not None
         assert self.H_local is not None
@@ -256,13 +266,11 @@ class DistributionalSA:
         penalties = self.profile_penalty_scaled
         for t in range(self.samples):
             wt = self.W[t]
-            if np.all(wt <= _EPS):
+            if np.all(wt <= _EPS) or not np.any(self.We[t] > 0.0):
                 self.H_local[t] = self.H_bar
                 continue
 
             local = self.H_local[t].copy()
-            # Conservative Lipschitz bound for the weighted quadratic plus
-            # archetype shrinkage term.
             lipschitz = 2.0 * (
                 float(np.max(self.We[t])) * float(np.dot(wt, wt))
                 + float(np.max(penalties))
@@ -283,8 +291,6 @@ class DistributionalSA:
             self.H_local[t] = local
 
     def _update_archetypes(self) -> None:
-        """Partial-pooling update of the global source-type archetypes."""
-
         assert self.H_local is not None
         H_bar = np.mean(self.H_local, axis=0)
         H_bar = np.maximum(H_bar, _EPS)
@@ -309,8 +315,6 @@ class DistributionalSA:
         return q_true + profile_penalty_loss, q_true, profile_penalty_loss
 
     def fit(self) -> "DistributionalSA":
-        """Fit the distributional source-type factorization."""
-
         W, H_bar = self._static_initialize()
         self.W = W
         self.H_bar = H_bar
@@ -331,7 +335,6 @@ class DistributionalSA:
 
             objective, _, _ = self._calculate_losses()
             self.objective_history.append(objective)
-
             if objective < best_objective:
                 best_objective = objective
                 best_state = (
@@ -347,8 +350,6 @@ class DistributionalSA:
                 self.converged = True
                 break
 
-        # Keep the best iterate in case numerical projected-gradient steps make
-        # the final objective slightly worse than an earlier iterate.
         self.W, self.H_bar, self.H_local = best_state
         objective, q_true, penalty_loss = self._calculate_losses()
         self.reconstruction = np.einsum("tk,tkj->tj", self.W, self.H_local)
@@ -365,8 +366,6 @@ class DistributionalSA:
         return self
 
     def result(self) -> DistributionalSAResult:
-        """Return a read-only-style result snapshot after :meth:`fit`."""
-
         if self.W is None or self.H_bar is None or self.H_local is None:
             raise RuntimeError("fit() must be called before result()")
         assert self.reconstruction is not None
