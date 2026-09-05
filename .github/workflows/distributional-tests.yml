@@ -9,12 +9,14 @@ on:
       - 'esat/model/distributional_sa.py'
       - 'eval/distributional_*.py'
       - 'tests/model/test_distributional_sa.py'
-      - 'scripts/run_distributional_synthetic.py'
+      - 'scripts/run_distributional_*.py'
       - '.github/workflows/distributional-tests.yml'
 
 jobs:
   test-distributional:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,7 +32,9 @@ jobs:
             esat/model/distributional_sa.py \
             eval/distributional_simulator.py \
             eval/distributional_recovery.py \
-            scripts/run_distributional_synthetic.py
+            eval/distributional_identifiability.py \
+            scripts/run_distributional_synthetic.py \
+            scripts/run_distributional_phase_diagram.py
       - name: Run targeted tests
         run: pytest tests/model/test_distributional_sa.py -q
       - name: Run smoke experiment
