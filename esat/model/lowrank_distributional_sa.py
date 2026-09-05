@@ -1,24 +1,20 @@
 """Low-rank distributional source-type factorization.
 
-This V2 prototype constrains occurrence-specific factor profiles to a learned
-low-dimensional family around a global archetype.  It is intentionally an
-empirical-Bayes / penalized prototype rather than a full posterior sampler.
+V2 constrains occurrence-specific factor profiles to a learned low-dimensional
+family around a global archetype. It is an empirical-Bayes / penalized
+prototype, not yet a full posterior sampler.
 
-For factor k and sample t, the model is conceptually
+Conceptually, for factor k and sample t::
 
     eta[t,k] = alpha[k] + D[t,k]
     rank(D[:,k,:]) <= r
     H_local[t,k] = softmax(eta[t,k])
     V[t,j] ~= sum_k W[t,k] * H_local[t,k,j]
 
-The low-rank deviation D is re-estimated by singular-value shrinkage after a
-weighted local-profile update.  This gives the model two distinct mechanisms:
-
-* H_bar / alpha define the recurring source-type identity;
-* a small number of learned profile directions define allowable within-type
-  heterogeneity.
-
-No source labels or reference source profiles are supplied.
+The key distinction from V1 is that local profile deviations cannot move
+arbitrarily in feature space. A weighted ridge step first asks which profile
+deviations are supported by receptor residuals; factor-wise SVD then retains
+only recurring low-rank directions and shrinks weak directions toward zero.
 """
 
 from __future__ import annotations
@@ -28,18 +24,20 @@ from typing import Iterable
 
 import numpy as np
 
-from esat.model.distributional_sa import DistributionalSA, _EPS
+from esat.model.distributional_sa import (
+    DistributionalSA,
+    _EPS,
+    _project_simplex_rows,
+)
 
 
 def _softmax_rows(x: np.ndarray) -> np.ndarray:
     shifted = x - np.max(x, axis=1, keepdims=True)
     exp_x = np.exp(np.clip(shifted, -60.0, 60.0))
-    denom = np.maximum(exp_x.sum(axis=1, keepdims=True), _EPS)
-    return exp_x / denom
+    return exp_x / np.maximum(exp_x.sum(axis=1, keepdims=True), _EPS)
 
 
 def _clr_rows(profiles: np.ndarray) -> np.ndarray:
-    """Centered-log-ratio coordinates for simplex-valued rows."""
     log_p = np.log(np.maximum(profiles, _EPS))
     return log_p - np.mean(log_p, axis=1, keepdims=True)
 
@@ -66,27 +64,13 @@ class LowRankDistributionalSAResult:
 class LowRankDistributionalSA(DistributionalSA):
     """Distributional source-type model with a learned low-rank profile family.
 
-    Parameters
-    ----------
-    variability_rank
-        Maximum number of profile-variation directions retained per factor.
-    sv_shrinkage
-        Strength of empirical singular-value shrinkage.  The shrinkage scale
-        is estimated separately for each factor from discarded singular
-        values, so factors can collapse toward the static special case when
-        the data do not support structured variability.
-    profile_penalty
-        Weak quadratic penalty used only while proposing local profiles before
-        projection onto the low-rank family.  In V2 it should usually be much
-        weaker than in the unrestricted V1 model because low-rank compression
-        supplies the main structural regularization.
+    ``profile_penalty`` is intentionally weak in V2. It stabilizes the local
+    ridge proposal, while low-rank compression and singular-value shrinkage
+    provide the main protection against arbitrary profile drift.
 
-    Notes
-    -----
-    ``latent_tau`` is learned from the retained CLR-space deviations.  It is an
-    empirical variability scale, not yet a sampled Bayesian posterior scale.
-    A later probabilistic implementation can replace this step with an
-    explicit shrinkage prior without changing the model semantics.
+    ``latent_tau`` is inferred from retained CLR-space deviations. It should be
+    interpreted as an empirical factor-specific variability scale, not as a
+    posterior draw from an explicit Bayesian prior.
     """
 
     def __init__(
@@ -95,8 +79,8 @@ class LowRankDistributionalSA(DistributionalSA):
         U: np.ndarray,
         factors: int,
         variability_rank: int = 2,
-        sv_shrinkage: float = 1.0,
-        profile_penalty: float | Iterable[float] = 0.05,
+        sv_shrinkage: float = 0.5,
+        profile_penalty: float | Iterable[float] = 0.001,
         seed: int = 42,
         init_iter: int = 1000,
         max_iter: int = 100,
@@ -130,8 +114,53 @@ class LowRankDistributionalSA(DistributionalSA):
         self.singular_values_raw: np.ndarray | None = None
         self.singular_values_shrunk: np.ndarray | None = None
 
+    def _update_local_profile_proposals(self) -> None:
+        """Weighted ridge update for sample-specific profile proposals.
+
+        With W and H_bar fixed, every feature j has a small K-dimensional
+        quadratic problem::
+
+            min_h  we_j (v_j - w^T h)^2
+                   + sum_k lambda_k (h_k - hbar_kj)^2.
+
+        Solving this system directly gives residual-supported profile movement
+        before the proposal is projected onto the low-rank family. This is
+        substantially less conservative than taking a few generic gradient
+        steps from the static solution.
+        """
+        assert self.W is not None
+        assert self.H_bar is not None
+        assert self.H_local is not None
+        assert self.profile_penalty_scaled is not None
+
+        penalties = np.maximum(self.profile_penalty_scaled, _EPS)
+        penalty_matrix = np.diag(penalties + _EPS)
+
+        for t in range(self.samples):
+            w = self.W[t]
+            if np.all(w <= _EPS):
+                self.H_local[t] = self.H_bar
+                continue
+
+            proposal = np.empty((self.factors, self.features), dtype=np.float64)
+            outer = np.outer(w, w)
+            for j in range(self.features):
+                weight = float(self.We[t, j])
+                a = weight * outer + penalty_matrix
+                b = (
+                    weight * w * float(self.V[t, j])
+                    + penalties * self.H_bar[:, j]
+                )
+                try:
+                    solution = np.linalg.solve(a, b)
+                except np.linalg.LinAlgError:
+                    solution = np.linalg.lstsq(a, b, rcond=None)[0]
+                proposal[:, j] = np.maximum(solution, _EPS)
+
+            self.H_local[t] = _project_simplex_rows(proposal)
+
     def _compress_profile_family(self) -> None:
-        """Project proposed local profiles onto factor-wise low-rank families."""
+        """Project local proposals onto factor-wise low-rank profile families."""
         assert self.H_local is not None
 
         max_rank = min(self.variability_rank, self.features - 1, self.samples - 1)
@@ -148,19 +177,14 @@ class LowRankDistributionalSA(DistributionalSA):
         for k in range(self.factors):
             clr = _clr_rows(self.H_local[:, k, :])
             alpha = np.mean(clr, axis=0)
-            alpha = alpha - np.mean(alpha)
+            alpha -= np.mean(alpha)
             centered = clr - alpha[None, :]
 
-            # SVD learns the recurring directions of within-type profile
-            # variation directly from receptor-data-supported local proposals.
             u, s, vt = np.linalg.svd(centered, full_matrices=False)
             rank = min(max_rank, s.size)
             head = s[:rank].copy()
             singular_values_raw[k, :rank] = head
 
-            # Estimate a factor-specific noise floor from discarded directions.
-            # If no tail exists, use the lower half of the spectrum.  Soft
-            # thresholding provides an empirical shrink-to-static mechanism.
             tail = s[rank:]
             if tail.size == 0:
                 start = max(1, s.size // 2)
@@ -170,8 +194,11 @@ class LowRankDistributionalSA(DistributionalSA):
             shrunk = np.maximum(head - threshold, 0.0)
             singular_values_shrunk[k, :rank] = shrunk
 
-            active = shrunk > max(1e-10, 1e-8 * max(float(head[0]) if head.size else 0.0, 1.0))
-            effective_rank[k] = int(np.sum(active))
+            active_tol = max(
+                1e-10,
+                1e-8 * max(float(head[0]) if head.size else 0.0, 1.0),
+            )
+            effective_rank[k] = int(np.sum(shrunk > active_tol))
 
             if rank > 0:
                 loadings[k, :rank] = vt[:rank]
@@ -181,12 +208,8 @@ class LowRankDistributionalSA(DistributionalSA):
             else:
                 deviation = np.zeros_like(centered)
 
-            logits = alpha[None, :] + deviation
-            local_k = _softmax_rows(logits)
-            archetype_k = _softmax_rows(alpha[None, :])[0]
-
-            new_local[:, k, :] = local_k
-            new_archetypes[k] = archetype_k
+            new_local[:, k, :] = _softmax_rows(alpha[None, :] + deviation)
+            new_archetypes[k] = _softmax_rows(alpha[None, :])[0]
             latent_tau[k] = float(np.sqrt(np.mean(deviation**2)))
 
         self.H_local = new_local
@@ -199,7 +222,6 @@ class LowRankDistributionalSA(DistributionalSA):
         self.singular_values_shrunk = singular_values_shrunk
 
     def fit(self) -> "LowRankDistributionalSA":
-        """Fit the low-rank distributional source-type factorization."""
         W, H_bar = self._static_initialize()
         self.W = W
         self.H_bar = H_bar
@@ -208,7 +230,6 @@ class LowRankDistributionalSA(DistributionalSA):
         ).copy()
         self.profile_penalty_scaled = self._resolve_penalty(W)
 
-        # Initialize latent-family outputs at the exact static special case.
         self.loadings = np.zeros(
             (self.factors, self.variability_rank, self.features), dtype=np.float64
         )
@@ -225,21 +246,11 @@ class LowRankDistributionalSA(DistributionalSA):
         initial_objective, _, _ = self._calculate_losses()
         self.objective_history = [initial_objective]
         best_objective = initial_objective
-        best_state = (
-            self.W.copy(),
-            self.H_bar.copy(),
-            self.H_local.copy(),
-            self.loadings.copy(),
-            self.scores.copy(),
-            self.latent_tau.copy(),
-            self.effective_rank.copy(),
-            self.singular_values_raw.copy(),
-            self.singular_values_shrunk.copy(),
-        )
+        best_state = self._snapshot_state()
 
         for iteration in range(1, self.max_iter + 1):
             self._update_contributions()
-            self._update_local_profiles()
+            self._update_local_profile_proposals()
             self._compress_profile_family()
 
             objective, _, _ = self._calculate_losses()
@@ -247,17 +258,7 @@ class LowRankDistributionalSA(DistributionalSA):
 
             if objective < best_objective:
                 best_objective = objective
-                best_state = (
-                    self.W.copy(),
-                    self.H_bar.copy(),
-                    self.H_local.copy(),
-                    self.loadings.copy(),
-                    self.scores.copy(),
-                    self.latent_tau.copy(),
-                    self.effective_rank.copy(),
-                    self.singular_values_raw.copy(),
-                    self.singular_values_shrunk.copy(),
-                )
+                best_state = self._snapshot_state()
 
             previous = self.objective_history[-2]
             relative_change = abs(previous - objective) / max(abs(previous), _EPS)
@@ -266,18 +267,7 @@ class LowRankDistributionalSA(DistributionalSA):
                 self.converged = True
                 break
 
-        (
-            self.W,
-            self.H_bar,
-            self.H_local,
-            self.loadings,
-            self.scores,
-            self.latent_tau,
-            self.effective_rank,
-            self.singular_values_raw,
-            self.singular_values_shrunk,
-        ) = best_state
-
+        self._restore_state(best_state)
         objective, q_true, penalty_loss = self._calculate_losses()
         self.reconstruction = np.einsum("tk,tkj->tj", self.W, self.H_local)
         self.profile_sd = np.std(self.H_local, axis=0)
@@ -291,6 +281,41 @@ class LowRankDistributionalSA(DistributionalSA):
         self.profile_penalty_loss = penalty_loss
         self.objective = objective
         return self
+
+    def _snapshot_state(self) -> tuple[np.ndarray, ...]:
+        assert self.W is not None
+        assert self.H_bar is not None
+        assert self.H_local is not None
+        assert self.loadings is not None
+        assert self.scores is not None
+        assert self.latent_tau is not None
+        assert self.effective_rank is not None
+        assert self.singular_values_raw is not None
+        assert self.singular_values_shrunk is not None
+        return (
+            self.W.copy(),
+            self.H_bar.copy(),
+            self.H_local.copy(),
+            self.loadings.copy(),
+            self.scores.copy(),
+            self.latent_tau.copy(),
+            self.effective_rank.copy(),
+            self.singular_values_raw.copy(),
+            self.singular_values_shrunk.copy(),
+        )
+
+    def _restore_state(self, state: tuple[np.ndarray, ...]) -> None:
+        (
+            self.W,
+            self.H_bar,
+            self.H_local,
+            self.loadings,
+            self.scores,
+            self.latent_tau,
+            self.effective_rank,
+            self.singular_values_raw,
+            self.singular_values_shrunk,
+        ) = state
 
     def result(self) -> LowRankDistributionalSAResult:
         if self.W is None or self.H_bar is None or self.H_local is None:
