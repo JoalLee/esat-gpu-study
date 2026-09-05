@@ -1,0 +1,50 @@
+name: Source Overlap Identifiability Pilot
+
+on:
+  push:
+    branches:
+      - feature/distributional-source-types
+    paths:
+      - 'eval/span_controlled_simulator.py'
+      - 'eval/span_identifiability.py'
+      - 'scripts/run_span_identifiability.py'
+      - '.github/workflows/source-overlap-pilot.yml'
+  workflow_dispatch:
+
+jobs:
+  overlap-pilot:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install minimal dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==2.2.6 scipy==1.15.3 pandas==2.3.0
+      - name: Run source-overlap pilot
+        run: |
+          python scripts/run_span_identifiability.py \
+            --alignments 0,0.75 \
+            --source-overlaps 0,0.5,0.8 \
+            --variability 0.7 \
+            --noise 0.01 \
+            --seeds 7,11,17 \
+            --models static,lowrank \
+            --factors 3 \
+            --features 9 \
+            --samples 100 \
+            --v2-profile-penalty 0.005 \
+            --v2-sv-shrinkage 0.5 \
+            --init-iter 120 \
+            --max-iter 8 \
+            --profile-steps 4 \
+            --output output/distributional/source_overlap_pilot.csv
+      - name: Upload pilot CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-overlap-identifiability-pilot
+          path: output/distributional/source_overlap_pilot.csv
