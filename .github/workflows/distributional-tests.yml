@@ -14,6 +14,7 @@ on:
       - 'tests/model/test_distributional_sa.py'
       - 'tests/model/test_lowrank_distributional_sa.py'
       - 'tests/eval/test_span_controlled_simulator.py'
+      - 'tests/eval/test_span_identifiability.py'
       - 'scripts/run_distributional_*.py'
       - 'scripts/run_lowrank_distributional_*.py'
       - 'scripts/run_span_*.py'
@@ -53,6 +54,7 @@ jobs:
           pytest tests/model/test_distributional_sa.py -q
           pytest tests/model/test_lowrank_distributional_sa.py -q
           pytest tests/eval/test_span_controlled_simulator.py -q
+          pytest tests/eval/test_span_identifiability.py -q
       - name: Run V1 smoke experiment
         run: |
           python scripts/run_distributional_synthetic.py \
