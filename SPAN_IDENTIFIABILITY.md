@@ -154,6 +154,57 @@ variation to the wrong factor or to W.
 Even orthogonal variation should collapse toward the static model when the
 profile-deviation signal is below measurement uncertainty.
 
+## Pilot evidence
+
+A first multi-seed pilot was run through
+`.github/workflows/span-identifiability-pilot.yml` using:
+
+- 3 factors and 9 features;
+- 100 samples;
+- alignments \(0, 0.25, 0.5, 0.75, 1\);
+- requested variability fractions 0.4 and 0.7;
+- relative noise levels 0.01 and 0.03;
+- seeds 7, 11, and 17;
+- static LS-NMF, unrestricted V1, and low-rank V2.
+
+The pilot supports the geometric hypothesis. For V2, mean recovery of the true
+profile-variation subspace was highest in the orthogonal regime and degraded
+strongly as the direction entered the static factor span:
+
+| Span alignment | V2 subspace-overlap range across pilot settings |
+| ---: | ---: |
+| 0.00 | 0.61–0.72 |
+| 0.25 | 0.22–0.26 |
+| 0.50 | 0.10–0.13 |
+| 0.75 | 0.04–0.05 |
+| 1.00 | 0.14–0.21 |
+
+The alignment-1 endpoint shows a modest rebound rather than a perfectly
+monotonic continuation. This should be treated as an empirical feature to
+investigate, not smoothed away. Even with that rebound, recovery remains far
+below the alignment-0 regime.
+
+The recovered profile-variability magnitude showed the same broad loss of
+identifiability. At alignment 0, V2 recovered roughly 0.40–0.41 of the true
+profile-space RMS variability in this pilot. At alignment 1, recovery ranged
+roughly from 0.04 to 0.19 depending on signal magnitude and noise.
+
+The same flexible model retained high contribution correlations throughout the
+pilot (approximately 0.94–0.97 for V2), which is itself an important warning:
+
+> good recovery of W or a low reconstruction Q does not imply that the model
+> has correctly identified the source-profile variability mechanism.
+
+Static LS-NMF, by construction, recovered zero profile variability and showed
+larger contribution distortion than V2 in the pilot. V1 generally improved W
+and local reconstruction relative to the static model but, because it has no
+explicit low-rank subspace, it cannot directly validate whether a recurring
+profile-variation direction was recovered.
+
+These are pilot results, not final performance claims. The next phase should
+increase seeds and explicitly vary source-profile separation in addition to
+alignment, variability magnitude, and noise.
+
 ## Important interpretation
 
 Failure to recover profile variability in a high-alignment regime is not
