@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from esat.model.lowrank_distributional_sa import LowRankDistributionalSA
 from eval.distributional_recovery import compare_distributional_truth
+from eval.lowrank_recovery import compare_lowrank_truth
 from eval.distributional_simulator import DistributionalSimulator
 
 
@@ -41,8 +42,8 @@ def main() -> int:
     parser.add_argument("--variability", default="0.00,0.10,0.20,0.35")
     parser.add_argument("--variability-rank", type=int, default=2)
     parser.add_argument("--fit-rank", type=int, default=2)
-    parser.add_argument("--profile-penalty", type=float, default=0.05)
-    parser.add_argument("--sv-shrinkage", type=float, default=1.0)
+    parser.add_argument("--profile-penalty", type=float, default=0.001)
+    parser.add_argument("--sv-shrinkage", type=float, default=0.5)
     parser.add_argument("--noise-fraction", type=float, default=0.05)
     parser.add_argument("--init-iter", type=int, default=1000)
     parser.add_argument("--max-iter", type=int, default=50)
@@ -84,6 +85,15 @@ def main() -> int:
         estimated_local_profiles=model.H_local,
     )
 
+    lowrank_recovery = None
+    if synthetic.loadings is not None:
+        lowrank_recovery = compare_lowrank_truth(
+            true_loadings=synthetic.loadings,
+            estimated_loadings=model.loadings,
+            factor_mapping=recovery.factor_mapping,
+            estimated_effective_rank=model.effective_rank,
+        )
+
     summary = {
         "seed": args.seed,
         "factors": args.factors,
@@ -104,6 +114,9 @@ def main() -> int:
         "effective_rank": model.effective_rank.tolist(),
         "profile_rms_variability_estimated": model.profile_rms_variability.tolist(),
         "recovery": recovery.to_dict(),
+        "lowrank_recovery": (
+            lowrank_recovery.to_dict() if lowrank_recovery is not None else None
+        ),
     }
 
     print(json.dumps(summary, indent=2))
