@@ -9,10 +9,12 @@ on:
       - 'esat/model/distributional_sa.py'
       - 'esat/model/lowrank_distributional_sa.py'
       - 'eval/distributional_*.py'
+      - 'eval/identifiability_*.py'
       - 'eval/lowrank_*.py'
       - 'eval/span_*.py'
       - 'tests/model/test_distributional_sa.py'
       - 'tests/model/test_lowrank_distributional_sa.py'
+      - 'tests/eval/test_identifiability_diagnostics.py'
       - 'tests/eval/test_span_controlled_simulator.py'
       - 'tests/eval/test_span_identifiability.py'
       - 'scripts/run_distributional_*.py'
@@ -41,6 +43,7 @@ jobs:
             esat/model/lowrank_distributional_sa.py \
             eval/distributional_simulator.py \
             eval/distributional_recovery.py \
+            eval/identifiability_diagnostics.py \
             eval/lowrank_recovery.py \
             eval/distributional_identifiability.py \
             eval/span_controlled_simulator.py \
@@ -53,6 +56,7 @@ jobs:
         run: |
           pytest tests/model/test_distributional_sa.py -q
           pytest tests/model/test_lowrank_distributional_sa.py -q
+          pytest tests/eval/test_identifiability_diagnostics.py -q
           pytest tests/eval/test_span_controlled_simulator.py -q
           pytest tests/eval/test_span_identifiability.py -q
       - name: Run V1 smoke experiment
