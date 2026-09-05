@@ -1,0 +1,46 @@
+name: Distributional Source-Type Tests
+
+on:
+  push:
+    branches:
+      - feature/distributional-source-types
+  pull_request:
+    paths:
+      - 'esat/model/distributional_sa.py'
+      - 'eval/distributional_*.py'
+      - 'tests/model/test_distributional_sa.py'
+      - 'scripts/run_distributional_synthetic.py'
+      - '.github/workflows/distributional-tests.yml'
+
+jobs:
+  test-distributional:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+      - name: Compile prototype modules
+        run: |
+          python -m py_compile \
+            esat/model/distributional_sa.py \
+            eval/distributional_simulator.py \
+            eval/distributional_recovery.py \
+            scripts/run_distributional_synthetic.py
+      - name: Run targeted tests
+        run: pytest tests/model/test_distributional_sa.py -q
+      - name: Run smoke experiment
+        run: |
+          python scripts/run_distributional_synthetic.py \
+            --factors 2 \
+            --features 7 \
+            --samples 40 \
+            --variability 0.05,0.25 \
+            --profile-penalty 1.0 \
+            --init-iter 100 \
+            --max-iter 5 \
+            --profile-steps 3
