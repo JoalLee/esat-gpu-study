@@ -23,12 +23,7 @@ def _orthonormal_rows(matrix: np.ndarray) -> np.ndarray:
 
 
 def subspace_overlap(true_basis: np.ndarray, estimated_basis: np.ndarray) -> float:
-    """Rotation/sign-invariant overlap between two row subspaces in [0, 1].
-
-    The score is the average squared cosine of principal angles over the true
-    subspace dimension. Missing estimated dimensions therefore reduce the
-    score instead of being silently ignored.
-    """
+    """Rotation/sign-invariant overlap between two row subspaces in [0, 1]."""
     q_true = _orthonormal_rows(true_basis)
     q_est = _orthonormal_rows(estimated_basis)
     if q_true.shape[0] == 0:
@@ -57,8 +52,16 @@ def compare_lowrank_truth(
     estimated_loadings: np.ndarray,
     factor_mapping: list[int] | np.ndarray,
     estimated_effective_rank: np.ndarray | None = None,
+    true_scores: np.ndarray | None = None,
 ) -> LowRankRecoveryResult:
-    """Compare low-rank variability spaces after factor-permutation alignment."""
+    """Compare low-rank variability spaces after factor-permutation alignment.
+
+    ``true_scores`` is important when a simulator stores a candidate loading
+    basis for a factor whose realized variability is zero. Only loading
+    directions with non-negligible score variation count toward the active
+    true subspace. This prevents a static factor from being mislabeled as a
+    rank-one variable factor merely because a dormant basis vector exists.
+    """
     true_loadings = np.asarray(true_loadings, dtype=np.float64)
     estimated_loadings = np.asarray(estimated_loadings, dtype=np.float64)
     mapping = np.asarray(factor_mapping, dtype=int)
@@ -72,13 +75,29 @@ def compare_lowrank_truth(
     if mapping.shape != (true_loadings.shape[0],):
         raise ValueError("factor_mapping length must match number of factors")
 
+    if true_scores is not None:
+        true_scores = np.asarray(true_scores, dtype=np.float64)
+        expected = (true_loadings.shape[0], true_loadings.shape[1])
+        if true_scores.ndim != 3:
+            raise ValueError("true_scores must be T x K x R")
+        if true_scores.shape[1:] != expected:
+            raise ValueError(
+                f"true_scores trailing shape {true_scores.shape[1:]} != {expected}"
+            )
+
     overlaps: list[float] = []
     true_rank: list[int] = []
     estimated_rank: list[int] = []
 
     for k in range(true_loadings.shape[0]):
         est_k = int(mapping[k])
-        true_basis = _orthonormal_rows(true_loadings[k])
+
+        if true_scores is None:
+            active_true = np.arange(true_loadings.shape[1])
+        else:
+            score_sd = np.std(true_scores[:, k, :], axis=0)
+            active_true = np.flatnonzero(score_sd > 1e-10)
+        true_basis = _orthonormal_rows(true_loadings[k, active_true])
 
         if estimated_effective_rank is None:
             est_basis = _orthonormal_rows(estimated_loadings[est_k])
@@ -92,7 +111,12 @@ def compare_lowrank_truth(
         estimated_rank.append(int(est_rank))
 
     rank_error = float(
-        np.mean(np.abs(np.asarray(true_rank, dtype=float) - np.asarray(estimated_rank, dtype=float)))
+        np.mean(
+            np.abs(
+                np.asarray(true_rank, dtype=float)
+                - np.asarray(estimated_rank, dtype=float)
+            )
+        )
     )
     return LowRankRecoveryResult(
         factor_subspace_overlap=overlaps,
