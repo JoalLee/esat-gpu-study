@@ -9,6 +9,7 @@ on:
       - 'esat/model/distributional_sa.py'
       - 'esat/model/lowrank_distributional_sa.py'
       - 'eval/distributional_*.py'
+      - 'eval/lowrank_*.py'
       - 'tests/model/test_distributional_sa.py'
       - 'tests/model/test_lowrank_distributional_sa.py'
       - 'scripts/run_distributional_*.py'
@@ -36,6 +37,7 @@ jobs:
             esat/model/lowrank_distributional_sa.py \
             eval/distributional_simulator.py \
             eval/distributional_recovery.py \
+            eval/lowrank_recovery.py \
             eval/distributional_identifiability.py \
             scripts/run_distributional_synthetic.py \
             scripts/run_lowrank_distributional_synthetic.py \
@@ -64,8 +66,8 @@ jobs:
             --variability 0.00,0.35 \
             --variability-rank 1 \
             --fit-rank 1 \
-            --profile-penalty 0.02 \
-            --sv-shrinkage 0.8 \
+            --profile-penalty 0.005 \
+            --sv-shrinkage 0.5 \
             --noise-fraction 0.02 \
             --init-iter 150 \
             --max-iter 8 \
