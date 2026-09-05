@@ -1,15 +1,13 @@
 """Geometric identifiability experiments for W versus profile variability.
 
-This module treats the angle between a true profile-variation direction and the
-static factor-difference span as a first-class experimental variable. It fits
-three model classes to the exact same synthetic dataset:
+This module treats two independent source-separation problems as explicit
+simulation axes:
 
-* ``static``: ordinary weighted LS-NMF with one fixed profile per factor;
-* ``v1``: unrestricted local-profile DistributionalSA;
-* ``lowrank``: low-rank distributional profile family.
+* alignment of true profile variation with the static factor-difference span;
+* similarity/commonality among the global source archetypes themselves.
 
-The resulting table is intended for an identifiability phase diagram, not for
-selecting a final real-data model by Q alone.
+The same generated dataset is fit with static LS-NMF, unrestricted V1, and
+low-rank V2 so reconstruction and latent recovery can be compared directly.
 """
 
 from __future__ import annotations
@@ -77,7 +75,6 @@ def _contribution_relative_error(
     estimated_contributions: np.ndarray,
     factor_mapping: list[int],
 ) -> float:
-    """Scale-aware W distortion after factor permutation alignment."""
     truth = np.asarray(true_contributions, dtype=np.float64)
     estimate = np.asarray(estimated_contributions, dtype=np.float64)[:, factor_mapping]
     numerator = np.linalg.norm(estimate - truth)
@@ -91,6 +88,7 @@ def run_span_identifiability_grid(
     noise_levels: Iterable[float],
     seeds: Iterable[int],
     *,
+    source_overlaps: Iterable[float] = (0.0,),
     model_kinds: Iterable[str] = ("static", "v1", "lowrank"),
     factors: int = 3,
     features: int = 10,
@@ -103,12 +101,13 @@ def run_span_identifiability_grid(
     max_iter: int = 15,
     profile_steps: int = 5,
 ) -> pd.DataFrame:
-    """Sweep confounding geometry, variability magnitude, noise, and seed.
+    """Sweep profile geometry, source overlap, variability, noise, and seed.
 
     ``variable_factor`` selects which factor receives profile variability. All
-    other factors are generated as static source types. This makes attribution
-    error directly observable rather than averaging over multiple simultaneous
-    profile families.
+    other factors are static. ``source_overlaps`` controls convex mixing of a
+    common profile into all global archetypes; the realized pairwise cosine is
+    also recorded because the mixing coefficient is not itself a similarity
+    metric.
     """
     kinds = [str(k).lower() for k in model_kinds]
     invalid = sorted(set(kinds) - {"static", "v1", "lowrank"})
@@ -122,152 +121,166 @@ def run_span_identifiability_grid(
         raise ValueError("variable_factor is outside factor range")
 
     rows: list[dict] = []
-    for alignment in alignments:
-        for variability in variability_levels:
-            variability_vector = np.zeros(factors, dtype=np.float64)
-            variability_vector[target] = float(variability)
+    for source_overlap in source_overlaps:
+        source_overlap = float(source_overlap)
+        for alignment in alignments:
+            for variability in variability_levels:
+                variability_vector = np.zeros(factors, dtype=np.float64)
+                variability_vector[target] = float(variability)
 
-            for noise in noise_levels:
-                for seed in seeds:
-                    synthetic = SpanControlledSimulator(
-                        seed=int(seed),
-                        factors_n=factors,
-                        features_n=features,
-                        samples_n=samples,
-                        alignment=float(alignment),
-                        variability=variability_vector,
-                        noise_fraction=float(noise),
-                    ).generate()
+                for noise in noise_levels:
+                    for seed in seeds:
+                        synthetic = SpanControlledSimulator(
+                            seed=int(seed),
+                            factors_n=factors,
+                            features_n=features,
+                            samples_n=samples,
+                            alignment=float(alignment),
+                            variability=variability_vector,
+                            source_overlap=source_overlap,
+                            noise_fraction=float(noise),
+                        ).generate()
 
-                    for model_kind in kinds:
-                        lowrank_metrics = None
-                        if model_kind == "static":
-                            fitted = fit_static_lsnmf(
-                                synthetic.data,
-                                synthetic.uncertainty,
-                                factors,
-                                seed=int(seed),
-                                max_iter=init_iter,
-                            )
-                            est_H = fitted.H
-                            est_W = fitted.W
-                            est_local = np.broadcast_to(
-                                est_H,
-                                (samples, factors, features),
-                            ).copy()
-                            q_true = fitted.q_true
-                            estimated_variability = np.zeros(factors)
-                            latent_tau = np.full(factors, np.nan)
-                            effective_rank = np.zeros(factors)
-                        elif model_kind == "v1":
-                            model = DistributionalSA(
-                                V=synthetic.data,
-                                U=synthetic.uncertainty,
-                                factors=factors,
-                                profile_penalty=v1_profile_penalty,
-                                seed=int(seed),
-                                init_iter=init_iter,
-                                max_iter=max_iter,
-                                profile_steps=profile_steps,
-                            ).fit()
-                            est_H = model.H_bar
-                            est_W = model.W
-                            est_local = model.H_local
-                            q_true = float(model.q_true)
-                            estimated_variability = model.profile_rms_variability
-                            latent_tau = np.full(factors, np.nan)
-                            effective_rank = np.full(factors, np.nan)
-                        else:
-                            model = LowRankDistributionalSA(
-                                V=synthetic.data,
-                                U=synthetic.uncertainty,
-                                factors=factors,
-                                variability_rank=1,
-                                sv_shrinkage=v2_sv_shrinkage,
-                                profile_penalty=v2_profile_penalty,
-                                seed=int(seed),
-                                init_iter=init_iter,
-                                max_iter=max_iter,
-                                profile_steps=profile_steps,
-                            ).fit()
-                            est_H = model.H_bar
-                            est_W = model.W
-                            est_local = model.H_local
-                            q_true = float(model.q_true)
-                            estimated_variability = model.profile_rms_variability
-                            latent_tau = model.latent_tau
-                            effective_rank = model.effective_rank
-
-                        recovery = compare_distributional_truth(
-                            true_archetypes=synthetic.archetypes,
-                            true_contributions=synthetic.contributions,
-                            true_local_profiles=synthetic.local_profiles,
-                            estimated_archetypes=est_H,
-                            estimated_contributions=est_W,
-                            estimated_local_profiles=est_local,
-                        )
-
-                        if model_kind == "lowrank":
-                            lowrank_metrics = compare_lowrank_truth(
-                                true_loadings=synthetic.loadings,
-                                estimated_loadings=model.loadings,
-                                factor_mapping=recovery.factor_mapping,
-                                estimated_effective_rank=model.effective_rank,
-                                true_scores=synthetic.scores,
-                            )
-
-                        mapped_target = int(recovery.factor_mapping[target])
-                        rows.append(
-                            {
-                                "model_kind": model_kind,
-                                "seed": int(seed),
-                                "requested_alignment": float(alignment),
-                                "actual_alignment_target": float(
-                                    synthetic.actual_alignment[target]
-                                ),
-                                "requested_variability": float(variability),
-                                "true_profile_variability_target": float(
-                                    synthetic.actual_profile_rms_variability[target]
-                                ),
-                                "noise_fraction": float(noise),
-                                "variable_factor": target,
-                                "mapped_estimated_factor": mapped_target,
-                                "q_true": q_true,
-                                "archetype_cosine_mean": recovery.archetype_cosine_mean,
-                                "contribution_correlation_mean": (
-                                    recovery.contribution_correlation_mean
-                                ),
-                                "contribution_relative_error": _contribution_relative_error(
-                                    synthetic.contributions,
-                                    est_W,
-                                    recovery.factor_mapping,
-                                ),
-                                "local_profile_rmse": recovery.local_profile_rmse,
-                                "variability_rmse": recovery.variability_rmse,
-                                "estimated_variability_target": float(
-                                    estimated_variability[mapped_target]
-                                ),
-                                "variability_recovery_ratio": float(
-                                    estimated_variability[mapped_target]
-                                    / max(
-                                        synthetic.actual_profile_rms_variability[target],
-                                        _EPS,
-                                    )
+                        for model_kind in kinds:
+                            lowrank_metrics = None
+                            if model_kind == "static":
+                                fitted = fit_static_lsnmf(
+                                    synthetic.data,
+                                    synthetic.uncertainty,
+                                    factors,
+                                    seed=int(seed),
+                                    max_iter=init_iter,
                                 )
-                                if synthetic.actual_profile_rms_variability[target] > _EPS
-                                else float("nan"),
-                                "latent_tau_target": float(latent_tau[mapped_target]),
-                                "effective_rank_target": float(
-                                    effective_rank[mapped_target]
-                                ),
-                                "subspace_overlap_target": (
-                                    float(
-                                        lowrank_metrics.factor_subspace_overlap[target]
-                                    )
-                                    if lowrank_metrics is not None
-                                    else float("nan")
-                                ),
-                            }
-                        )
+                                est_H = fitted.H
+                                est_W = fitted.W
+                                est_local = np.broadcast_to(
+                                    est_H, (samples, factors, features)
+                                ).copy()
+                                q_true = fitted.q_true
+                                estimated_variability = np.zeros(factors)
+                                latent_tau = np.full(factors, np.nan)
+                                effective_rank = np.zeros(factors)
+                            elif model_kind == "v1":
+                                model = DistributionalSA(
+                                    V=synthetic.data,
+                                    U=synthetic.uncertainty,
+                                    factors=factors,
+                                    profile_penalty=v1_profile_penalty,
+                                    seed=int(seed),
+                                    init_iter=init_iter,
+                                    max_iter=max_iter,
+                                    profile_steps=profile_steps,
+                                ).fit()
+                                est_H = model.H_bar
+                                est_W = model.W
+                                est_local = model.H_local
+                                q_true = float(model.q_true)
+                                estimated_variability = model.profile_rms_variability
+                                latent_tau = np.full(factors, np.nan)
+                                effective_rank = np.full(factors, np.nan)
+                            else:
+                                model = LowRankDistributionalSA(
+                                    V=synthetic.data,
+                                    U=synthetic.uncertainty,
+                                    factors=factors,
+                                    variability_rank=1,
+                                    sv_shrinkage=v2_sv_shrinkage,
+                                    profile_penalty=v2_profile_penalty,
+                                    seed=int(seed),
+                                    init_iter=init_iter,
+                                    max_iter=max_iter,
+                                    profile_steps=profile_steps,
+                                ).fit()
+                                est_H = model.H_bar
+                                est_W = model.W
+                                est_local = model.H_local
+                                q_true = float(model.q_true)
+                                estimated_variability = model.profile_rms_variability
+                                latent_tau = model.latent_tau
+                                effective_rank = model.effective_rank
+
+                            recovery = compare_distributional_truth(
+                                true_archetypes=synthetic.archetypes,
+                                true_contributions=synthetic.contributions,
+                                true_local_profiles=synthetic.local_profiles,
+                                estimated_archetypes=est_H,
+                                estimated_contributions=est_W,
+                                estimated_local_profiles=est_local,
+                            )
+
+                            if model_kind == "lowrank":
+                                lowrank_metrics = compare_lowrank_truth(
+                                    true_loadings=synthetic.loadings,
+                                    estimated_loadings=model.loadings,
+                                    factor_mapping=recovery.factor_mapping,
+                                    estimated_effective_rank=model.effective_rank,
+                                    true_scores=synthetic.scores,
+                                )
+
+                            mapped_target = int(recovery.factor_mapping[target])
+                            true_var = float(
+                                synthetic.actual_profile_rms_variability[target]
+                            )
+                            rows.append(
+                                {
+                                    "model_kind": model_kind,
+                                    "seed": int(seed),
+                                    "requested_source_overlap": source_overlap,
+                                    "pairwise_archetype_cosine_mean": float(
+                                        synthetic.pairwise_archetype_cosine_mean
+                                    ),
+                                    "requested_alignment": float(alignment),
+                                    "actual_alignment_target": float(
+                                        synthetic.actual_alignment[target]
+                                    ),
+                                    "requested_variability": float(variability),
+                                    "true_profile_variability_target": true_var,
+                                    "noise_fraction": float(noise),
+                                    "variable_factor": target,
+                                    "mapped_estimated_factor": mapped_target,
+                                    "q_true": q_true,
+                                    "archetype_cosine_mean": (
+                                        recovery.archetype_cosine_mean
+                                    ),
+                                    "contribution_correlation_mean": (
+                                        recovery.contribution_correlation_mean
+                                    ),
+                                    "contribution_relative_error": (
+                                        _contribution_relative_error(
+                                            synthetic.contributions,
+                                            est_W,
+                                            recovery.factor_mapping,
+                                        )
+                                    ),
+                                    "local_profile_rmse": recovery.local_profile_rmse,
+                                    "variability_rmse": recovery.variability_rmse,
+                                    "estimated_variability_target": float(
+                                        estimated_variability[mapped_target]
+                                    ),
+                                    "variability_recovery_ratio": (
+                                        float(
+                                            estimated_variability[mapped_target]
+                                            / max(true_var, _EPS)
+                                        )
+                                        if true_var > _EPS
+                                        else float("nan")
+                                    ),
+                                    "latent_tau_target": float(
+                                        latent_tau[mapped_target]
+                                    ),
+                                    "effective_rank_target": float(
+                                        effective_rank[mapped_target]
+                                    ),
+                                    "subspace_overlap_target": (
+                                        float(
+                                            lowrank_metrics.factor_subspace_overlap[
+                                                target
+                                            ]
+                                        )
+                                        if lowrank_metrics is not None
+                                        else float("nan")
+                                    ),
+                                }
+                            )
 
     return pd.DataFrame(rows)
