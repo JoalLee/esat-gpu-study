@@ -92,6 +92,7 @@ def main() -> int:
             estimated_loadings=model.loadings,
             factor_mapping=recovery.factor_mapping,
             estimated_effective_rank=model.effective_rank,
+            true_scores=synthetic.scores,
         )
 
     summary = {
