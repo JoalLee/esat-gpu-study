@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Run a controlled distributional source-type recovery experiment."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from esat.model.distributional_sa import DistributionalSA
+from eval.distributional_recovery import compare_distributional_truth
+from eval.distributional_simulator import DistributionalSimulator
+
+
+def _parse_variability(text: str, factors: int) -> list[float]:
+    values = [float(v.strip()) for v in text.split(",") if v.strip()]
+    if len(values) == 1:
+        values *= factors
+    if len(values) != factors:
+        raise argparse.ArgumentTypeError(
+            f"variability must contain one value or {factors} comma-separated values"
+        )
+    return values
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Synthetic recovery experiment for distributional source types."
+    )
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--factors", type=int, default=4)
+    parser.add_argument("--features", type=int, default=12)
+    parser.add_argument("--samples", type=int, default=300)
+    parser.add_argument("--variability", default="0.05,0.10,0.20,0.35")
+    parser.add_argument("--profile-penalty", type=float, default=1.0)
+    parser.add_argument("--noise-fraction", type=float, default=0.05)
+    parser.add_argument("--init-iter", type=int, default=1000)
+    parser.add_argument("--max-iter", type=int, default=50)
+    parser.add_argument("--profile-steps", type=int, default=10)
+    parser.add_argument("--output", type=Path, default=None)
+    args = parser.parse_args()
+
+    variability = _parse_variability(args.variability, args.factors)
+    synthetic = DistributionalSimulator(
+        seed=args.seed,
+        factors_n=args.factors,
+        features_n=args.features,
+        samples_n=args.samples,
+        variability=variability,
+        noise_fraction=args.noise_fraction,
+    ).generate()
+
+    model = DistributionalSA(
+        V=synthetic.data,
+        U=synthetic.uncertainty,
+        factors=args.factors,
+        profile_penalty=args.profile_penalty,
+        seed=args.seed,
+        init_iter=args.init_iter,
+        max_iter=args.max_iter,
+        profile_steps=args.profile_steps,
+    ).fit()
+
+    recovery = compare_distributional_truth(
+        true_archetypes=synthetic.archetypes,
+        true_contributions=synthetic.contributions,
+        true_local_profiles=synthetic.local_profiles,
+        estimated_archetypes=model.H_bar,
+        estimated_contributions=model.W,
+        estimated_local_profiles=model.H_local,
+    )
+
+    summary = {
+        "seed": args.seed,
+        "factors": args.factors,
+        "features": args.features,
+        "samples": args.samples,
+        "profile_penalty": args.profile_penalty,
+        "variability_requested": variability,
+        "objective_initial": float(model.objective_history[0]),
+        "objective_final": float(model.objective),
+        "q_true": float(model.q_true),
+        "profile_penalty_loss": float(model.profile_penalty_loss),
+        "iterations": int(model.iterations),
+        "converged": bool(model.converged),
+        "profile_rms_variability_estimated": model.profile_rms_variability.tolist(),
+        "recovery": recovery.to_dict(),
+    }
+
+    print(json.dumps(summary, indent=2))
+
+    if args.output is not None:
+        output = args.output if args.output.is_absolute() else ROOT / args.output
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        arrays_path = output.with_suffix(".npz")
+        np.savez_compressed(
+            arrays_path,
+            data=synthetic.data,
+            uncertainty=synthetic.uncertainty,
+            true_archetypes=synthetic.archetypes,
+            true_local_profiles=synthetic.local_profiles,
+            true_contributions=synthetic.contributions,
+            estimated_archetypes=model.H_bar,
+            estimated_local_profiles=model.H_local,
+            estimated_contributions=model.W,
+        )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
