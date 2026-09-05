@@ -12,10 +12,13 @@ in W. A direction orthogonal to S (while remaining in the simplex tangent
 space) cannot be reproduced locally by merely redistributing W among the
 static archetypes.
 
-This module generates additive, positivity-preserving local profile variation
-with a requested squared projection onto S. It is intentionally separate from
-the generic logistic-normal simulator because the additive construction gives
-a transparent geometric identifiability axis.
+The simulator independently controls two geometries:
+
+* ``alignment``: overlap of profile variability with the static factor span;
+* ``source_overlap``: commonality among the global source archetypes.
+
+This allows the phase diagram to distinguish W/F confounding from the more
+familiar problem of poorly separated source types.
 """
 
 from __future__ import annotations
@@ -64,7 +67,6 @@ def _static_confounding_basis(archetypes: np.ndarray) -> np.ndarray:
     if archetypes.shape[0] <= 1:
         return np.zeros((0, archetypes.shape[1]), dtype=np.float64)
     differences = archetypes[1:] - archetypes[0]
-    # Differences already sum to zero because each profile sums to one.
     return _orthonormal_rows(differences)
 
 
@@ -119,7 +121,6 @@ def _direction_with_alignment(
 
     in_span = _random_in_span(rng, confounding_basis)
     direction = np.sqrt(alignment) * in_span + np.sqrt(1.0 - alignment) * orthogonal
-    # Both components are orthonormal, up to floating point error.
     direction -= np.mean(direction)
     return _unit(direction)
 
@@ -143,6 +144,19 @@ def _safe_additive_amplitude(profile: np.ndarray, direction: np.ndarray) -> floa
     return 0.80 * float(np.min(bounds))
 
 
+def _mean_pairwise_cosine(profiles: np.ndarray) -> float:
+    profiles = np.asarray(profiles, dtype=np.float64)
+    values: list[float] = []
+    for i in range(profiles.shape[0]):
+        for j in range(i + 1, profiles.shape[0]):
+            denom = max(
+                float(np.linalg.norm(profiles[i]) * np.linalg.norm(profiles[j])),
+                _EPS,
+            )
+            values.append(float(np.dot(profiles[i], profiles[j]) / denom))
+    return float(np.mean(values)) if values else 1.0
+
+
 @dataclass(frozen=True)
 class SpanControlledSyntheticData:
     data: np.ndarray
@@ -158,10 +172,12 @@ class SpanControlledSyntheticData:
     confounding_basis: np.ndarray
     requested_variability: np.ndarray
     actual_profile_rms_variability: np.ndarray
+    requested_source_overlap: float
+    pairwise_archetype_cosine_mean: float
 
 
 class SpanControlledSimulator:
-    """Generate receptor data across a controlled W/F confounding axis.
+    """Generate receptor data across controlled profile-identifiability axes.
 
     Parameters
     ----------
@@ -173,10 +189,13 @@ class SpanControlledSimulator:
     variability
         Fraction (0..1 recommended) of each factor's positivity-safe additive
         amplitude. A scalar applies to all factors. Zero gives a static factor.
+    source_overlap
+        Convex mixing fraction of a common profile into every archetype.
+        ``0`` leaves independently drawn profiles; values approaching ``1``
+        make source types increasingly similar. The realized mean pairwise
+        cosine is returned because the mixing fraction itself is not a cosine.
     archetype_concentration
-        Dirichlet concentration used for positive archetypes. Values above one
-        avoid extremely tiny components so controlled additive perturbations
-        have a useful dynamic range.
+        Dirichlet concentration used for positive archetypes.
     """
 
     def __init__(
@@ -187,6 +206,7 @@ class SpanControlledSimulator:
         samples_n: int = 200,
         alignment: float = 0.0,
         variability: float | Iterable[float] = 0.4,
+        source_overlap: float = 0.0,
         contribution_max: float = 10.0,
         noise_fraction: float = 0.03,
         uncertainty_floor: float = 0.01,
@@ -197,6 +217,7 @@ class SpanControlledSimulator:
         self.features_n = int(features_n)
         self.samples_n = int(samples_n)
         self.alignment = float(alignment)
+        self.source_overlap = float(source_overlap)
         self.contribution_max = float(contribution_max)
         self.noise_fraction = float(noise_fraction)
         self.uncertainty_floor = float(uncertainty_floor)
@@ -212,6 +233,8 @@ class SpanControlledSimulator:
             raise ValueError("samples_n must be >= 3")
         if not 0.0 <= self.alignment <= 1.0:
             raise ValueError("alignment must be in [0, 1]")
+        if not 0.0 <= self.source_overlap < 1.0:
+            raise ValueError("source_overlap must be in [0, 1)")
         if self.contribution_max <= 0.0:
             raise ValueError("contribution_max must be > 0")
         if self.noise_fraction < 0.0 or self.uncertainty_floor <= 0.0:
@@ -231,7 +254,16 @@ class SpanControlledSimulator:
 
     def _generate_archetypes(self) -> np.ndarray:
         concentration = np.full(self.features_n, self.archetype_concentration)
-        return self.rng.dirichlet(concentration, size=self.factors_n)
+        unique = self.rng.dirichlet(concentration, size=self.factors_n)
+        if self.source_overlap <= 0.0:
+            return unique
+        common = self.rng.dirichlet(concentration)
+        profiles = (
+            (1.0 - self.source_overlap) * unique
+            + self.source_overlap * common[None, :]
+        )
+        profiles /= profiles.sum(axis=1, keepdims=True)
+        return profiles
 
     def _generate_contributions(self) -> np.ndarray:
         base = self.rng.gamma(2.0, 1.0, size=(self.samples_n, self.factors_n))
@@ -257,40 +289,33 @@ class SpanControlledSimulator:
         )
         actual_alignment = np.zeros(self.factors_n, dtype=np.float64)
 
-        # Bounded scores avoid positivity failures and make requested
-        # variability directly interpretable as a fraction of safe amplitude.
         raw_scores = np.tanh(self.rng.normal(size=(self.samples_n, self.factors_n)))
         raw_scores -= raw_scores.mean(axis=0, keepdims=True)
         max_abs = np.maximum(np.max(np.abs(raw_scores), axis=0), _EPS)
         raw_scores /= max_abs[None, :]
 
         for k in range(self.factors_n):
-            if self.variability[k] <= 0.0:
-                direction = _direction_with_alignment(
-                    self.rng, basis, self.features_n, self.alignment
-                )
-                loadings[k, 0] = direction
-                local[:, k, :] = archetypes[k]
-                actual_alignment[k] = _squared_span_overlap(direction, basis)
-                continue
-
             direction = _direction_with_alignment(
                 self.rng, basis, self.features_n, self.alignment
             )
+            loadings[k, 0] = direction
+            actual_alignment[k] = _squared_span_overlap(direction, basis)
+
+            if self.variability[k] <= 0.0:
+                local[:, k, :] = archetypes[k]
+                continue
+
             safe = _safe_additive_amplitude(archetypes[k], direction)
             amplitude = min(float(self.variability[k]), 1.0) * safe
             factor_scores = amplitude * raw_scores[:, k]
-
             candidate = archetypes[k][None, :] + factor_scores[:, None] * direction[None, :]
             if np.min(candidate) < -1e-10:
                 raise RuntimeError("positivity-safe profile construction failed")
             candidate = np.maximum(candidate, _EPS)
             candidate /= candidate.sum(axis=1, keepdims=True)
 
-            loadings[k, 0] = direction
             scores[:, k, 0] = factor_scores
             local[:, k, :] = candidate
-            actual_alignment[k] = _squared_span_overlap(direction, basis)
 
         actual_variability = np.sqrt(
             np.mean((local - archetypes[None, :, :]) ** 2, axis=(0, 2))
@@ -307,10 +332,7 @@ class SpanControlledSimulator:
             self.noise_fraction * np.maximum(signal, 0.0),
             self.uncertainty_floor,
         )
-        data = np.maximum(
-            signal + self.rng.normal(0.0, uncertainty),
-            0.0,
-        )
+        data = np.maximum(signal + self.rng.normal(0.0, uncertainty), 0.0)
         actual_variability = np.sqrt(
             np.mean((local - archetypes[None, :, :]) ** 2, axis=(0, 2))
         )
@@ -329,4 +351,6 @@ class SpanControlledSimulator:
             confounding_basis=basis,
             requested_variability=self.variability.copy(),
             actual_profile_rms_variability=actual_variability,
+            requested_source_overlap=self.source_overlap,
+            pairwise_archetype_cosine_mean=_mean_pairwise_cosine(archetypes),
         )
