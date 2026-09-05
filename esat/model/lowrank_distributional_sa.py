@@ -13,9 +13,8 @@ For factor k and sample t::
 
 A weighted ridge step proposes receptor-residual-supported local profiles.
 Factor-wise SVD then retains only recurring low-rank directions and shrinks
-weak singular directions. The ridge penalty and low-rank family complexity are
-kept separate so V1-style shrinkage cannot automatically force V2 back to the
-static solution.
+weak singular directions. Explicit observation masks inherited from
+``DistributionalSA`` give missing cells exactly zero reconstruction weight.
 """
 
 from __future__ import annotations
@@ -65,6 +64,8 @@ class LowRankDistributionalSA(DistributionalSA):
 
     Parameters
     ----------
+    observation_mask
+        Optional boolean receptor mask. Missing cells have zero data weight.
     variability_rank
         Maximum profile-family rank per source type.
     sv_shrinkage
@@ -72,11 +73,8 @@ class LowRankDistributionalSA(DistributionalSA):
         noise floor estimated from discarded directions.
     profile_penalty
         Weak ridge penalty used only to generate stable local-profile proposals.
-        It is not the V2 model-complexity penalty.
     family_penalty
-        Optional direct penalty on retained CLR-space profile deviations. The
-        default is zero because singular-value shrinkage already regularizes
-        the family in this prototype.
+        Optional direct penalty on retained CLR-space profile deviations.
 
     Notes
     -----
@@ -89,6 +87,7 @@ class LowRankDistributionalSA(DistributionalSA):
         V: np.ndarray,
         U: np.ndarray,
         factors: int,
+        observation_mask: np.ndarray | None = None,
         variability_rank: int = 2,
         sv_shrinkage: float = 0.5,
         profile_penalty: float | Iterable[float] = 0.001,
@@ -103,6 +102,7 @@ class LowRankDistributionalSA(DistributionalSA):
             V=V,
             U=U,
             factors=factors,
+            observation_mask=observation_mask,
             profile_penalty=profile_penalty,
             seed=seed,
             init_iter=init_iter,
@@ -141,7 +141,7 @@ class LowRankDistributionalSA(DistributionalSA):
 
         for t in range(self.samples):
             w = self.W[t]
-            if np.all(w <= _EPS):
+            if np.all(w <= _EPS) or not np.any(self.We[t] > 0.0):
                 self.H_local[t] = self.H_bar
                 continue
 
@@ -193,7 +193,10 @@ class LowRankDistributionalSA(DistributionalSA):
             shrunk = np.maximum(head - threshold, 0.0)
             singular_values_shrunk[k, :rank] = shrunk
 
-            active_tol = max(1e-10, 1e-8 * max(float(head[0]) if head.size else 0.0, 1.0))
+            active_tol = max(
+                1e-10,
+                1e-8 * max(float(head[0]) if head.size else 0.0, 1.0),
+            )
             effective_rank[k] = int(np.sum(shrunk > active_tol))
 
             if rank > 0:
@@ -243,7 +246,9 @@ class LowRankDistributionalSA(DistributionalSA):
         W, H_bar = self._static_initialize()
         self.W = W
         self.H_bar = H_bar
-        self.H_local = np.broadcast_to(H_bar, (self.samples, self.factors, self.features)).copy()
+        self.H_local = np.broadcast_to(
+            H_bar, (self.samples, self.factors, self.features)
+        ).copy()
         self.profile_penalty_scaled = self._resolve_penalty(W)
 
         self.loadings = np.zeros((self.factors, self.variability_rank, self.features))
@@ -294,15 +299,27 @@ class LowRankDistributionalSA(DistributionalSA):
         assert self.latent_tau is not None and self.effective_rank is not None
         assert self.singular_values_raw is not None and self.singular_values_shrunk is not None
         return (
-            self.W.copy(), self.H_bar.copy(), self.H_local.copy(), self.loadings.copy(),
-            self.scores.copy(), self.latent_tau.copy(), self.effective_rank.copy(),
-            self.singular_values_raw.copy(), self.singular_values_shrunk.copy(),
+            self.W.copy(),
+            self.H_bar.copy(),
+            self.H_local.copy(),
+            self.loadings.copy(),
+            self.scores.copy(),
+            self.latent_tau.copy(),
+            self.effective_rank.copy(),
+            self.singular_values_raw.copy(),
+            self.singular_values_shrunk.copy(),
         )
 
     def _restore_state(self, state: tuple[np.ndarray, ...]) -> None:
         (
-            self.W, self.H_bar, self.H_local, self.loadings, self.scores,
-            self.latent_tau, self.effective_rank, self.singular_values_raw,
+            self.W,
+            self.H_bar,
+            self.H_local,
+            self.loadings,
+            self.scores,
+            self.latent_tau,
+            self.effective_rank,
+            self.singular_values_raw,
             self.singular_values_shrunk,
         ) = state
 
