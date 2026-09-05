@@ -29,11 +29,16 @@ def _strings(text: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Sweep profile-variation alignment with the static factor span to map "
-            "when within-type variability can be distinguished from changes in W."
+            "Sweep profile-variation alignment, global source-profile overlap, "
+            "variability magnitude, and noise to map W/F identifiability."
         )
     )
     parser.add_argument("--alignments", default="0,0.25,0.5,0.75,1")
+    parser.add_argument(
+        "--source-overlaps",
+        default="0",
+        help="Common-profile mixing fractions; e.g. 0,0.5,0.8",
+    )
     parser.add_argument("--variability", default="0.15,0.35,0.60")
     parser.add_argument("--noise", default="0.01,0.03,0.07")
     parser.add_argument("--seeds", default="11,17,23")
@@ -57,6 +62,7 @@ def main() -> int:
 
     results = run_span_identifiability_grid(
         alignments=_floats(args.alignments),
+        source_overlaps=_floats(args.source_overlaps),
         variability_levels=_floats(args.variability),
         noise_levels=_floats(args.noise),
         seeds=_ints(args.seeds),
@@ -79,10 +85,17 @@ def main() -> int:
 
     summary = (
         results.groupby(
-            ["model_kind", "requested_alignment", "requested_variability", "noise_fraction"],
+            [
+                "model_kind",
+                "requested_source_overlap",
+                "requested_alignment",
+                "requested_variability",
+                "noise_fraction",
+            ],
             dropna=False,
         )[
             [
+                "pairwise_archetype_cosine_mean",
                 "contribution_correlation_mean",
                 "contribution_relative_error",
                 "local_profile_rmse",
