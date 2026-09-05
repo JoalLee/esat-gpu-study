@@ -60,3 +60,29 @@ def test_alignment_one_direction_lies_in_static_difference_span():
     basis = synthetic.confounding_basis
     projection = basis.T @ (basis @ direction)
     assert np.linalg.norm(direction - projection) < 1e-8
+
+
+def test_source_overlap_increases_realized_archetype_similarity():
+    separated = SpanControlledSimulator(
+        seed=61,
+        factors_n=3,
+        features_n=10,
+        samples_n=50,
+        alignment=0.0,
+        variability=0.0,
+        source_overlap=0.0,
+        noise_fraction=0.0,
+    ).generate()
+    overlapping = SpanControlledSimulator(
+        seed=61,
+        factors_n=3,
+        features_n=10,
+        samples_n=50,
+        alignment=0.0,
+        variability=0.0,
+        source_overlap=0.8,
+        noise_fraction=0.0,
+    ).generate()
+
+    assert overlapping.pairwise_archetype_cosine_mean > separated.pairwise_archetype_cosine_mean
+    assert overlapping.pairwise_archetype_cosine_mean > 0.95
