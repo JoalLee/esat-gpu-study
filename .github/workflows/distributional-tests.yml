@@ -8,6 +8,7 @@ on:
     paths:
       - 'esat/model/distributional_sa.py'
       - 'esat/model/lowrank_distributional_sa.py'
+      - 'esat/model/ls_nmf.py'
       - 'eval/distributional_*.py'
       - 'eval/identifiability_*.py'
       - 'eval/lowrank_*.py'
@@ -17,6 +18,7 @@ on:
       - 'tests/eval/test_identifiability_diagnostics.py'
       - 'tests/eval/test_span_controlled_simulator.py'
       - 'tests/eval/test_span_identifiability.py'
+      - 'tests/eval/test_distributional_selection.py'
       - 'scripts/run_distributional_*.py'
       - 'scripts/run_lowrank_distributional_*.py'
       - 'scripts/run_span_*.py'
@@ -41,8 +43,10 @@ jobs:
           python -m py_compile \
             esat/model/distributional_sa.py \
             esat/model/lowrank_distributional_sa.py \
+            esat/model/ls_nmf.py \
             eval/distributional_simulator.py \
             eval/distributional_recovery.py \
+            eval/distributional_selection.py \
             eval/identifiability_diagnostics.py \
             eval/lowrank_recovery.py \
             eval/distributional_identifiability.py \
@@ -51,7 +55,9 @@ jobs:
             scripts/run_distributional_synthetic.py \
             scripts/run_lowrank_distributional_synthetic.py \
             scripts/run_distributional_phase_diagram.py \
-            scripts/run_span_identifiability.py
+            scripts/run_span_identifiability.py \
+            scripts/run_distributional_fs0610.py \
+            scripts/run_distributional_k_sweep.py
       - name: Run targeted tests
         run: |
           pytest tests/model/test_distributional_sa.py -q
@@ -59,6 +65,7 @@ jobs:
           pytest tests/eval/test_identifiability_diagnostics.py -q
           pytest tests/eval/test_span_controlled_simulator.py -q
           pytest tests/eval/test_span_identifiability.py -q
+          pytest tests/eval/test_distributional_selection.py -q
       - name: Run V1 smoke experiment
         run: |
           python scripts/run_distributional_synthetic.py \
@@ -100,3 +107,17 @@ jobs:
             --max-iter 6 \
             --profile-steps 4 \
             --output output/distributional/span_ci.csv
+      - name: Run real-data K-sweep smoke test
+        run: |
+          python scripts/run_distributional_k_sweep.py \
+            --models static,lowrank \
+            --factors 2,3 \
+            --seeds 7,11 \
+            --start-row 10 \
+            --max-rows 80 \
+            --holdout-fraction 0.10 \
+            --static-max-iter 50 \
+            --init-iter 20 \
+            --max-iter 3 \
+            --profile-steps 2 \
+            --output-dir output/distributional/k_sweep_ci

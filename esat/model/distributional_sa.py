@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import numpy as np
-from scipy.optimize import nnls
+from scipy.optimize import lsq_linear, nnls
 
 from esat.model.ls_nmf import LSNMF
 
@@ -253,7 +253,24 @@ class DistributionalSA:
                 continue
             design = self.H_local[t].T * sqrt_weight[:, None]
             target = self.V[t] * sqrt_weight
-            solution, _ = nnls(design, target)
+            try:
+                solution, _ = nnls(
+                    design,
+                    target,
+                    maxiter=max(1000, 100 * self.factors),
+                )
+            except RuntimeError as error:
+                fallback = lsq_linear(
+                    design,
+                    target,
+                    bounds=(0.0, np.inf),
+                    max_iter=max(1000, 100 * self.factors),
+                )
+                if not np.isfinite(fallback.x).all():
+                    raise RuntimeError(
+                        "weighted contribution update produced non-finite values"
+                    ) from error
+                solution = fallback.x
             self.W[t] = np.maximum(solution, 0.0)
 
     def _update_local_profiles(self) -> None:

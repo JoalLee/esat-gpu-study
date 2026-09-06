@@ -41,11 +41,23 @@ class LSNMF:
             WH = np.matmul(W, H)
             H_num = np.matmul(W.T, WeV)
             H_den = np.matmul(W.T, np.multiply(We, WH))
-            H = np.multiply(H, np.divide(H_num, H_den))
+            H_ratio = np.divide(
+                H_num,
+                H_den,
+                out=np.ones_like(H_num),
+                where=H_den > 0.0,
+            )
+            H = np.multiply(H, H_ratio)
 
         WH = np.matmul(W, H)
         W_num = np.matmul(WeV, H.T)
         W_den = np.matmul(np.multiply(We, WH), H.T)
-        W = np.multiply(W, np.divide(W_num, W_den))
+        W_ratio = np.divide(
+            W_num,
+            W_den,
+            out=np.ones_like(W_num),
+            where=W_den > 0.0,
+        )
+        W = np.multiply(W, W_ratio)
 
         return W, H

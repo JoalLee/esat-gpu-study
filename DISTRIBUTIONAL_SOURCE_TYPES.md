@@ -101,8 +101,18 @@ complex probabilistic backend.
   - contribution correlation
   - local-profile RMSE
   - variability recovery
+- `eval/distributional_selection.py`
+  - common held-out masks
+  - masked static LS-NMF baseline
+  - weighted training/held-out metrics
+- `eval/distributional_stability.py`
+  - multi-seed archetype/contribution/variability stability
 - `scripts/run_distributional_synthetic.py`
   - one-command controlled experiment
+- `scripts/run_distributional_fs0610.py`
+  - real-data single-fit runner for V1 or low-rank V2
+- `scripts/run_distributional_k_sweep.py`
+  - Static-versus-V2 factor/seed selection protocol
 - `tests/model/test_distributional_sa.py`
   - static-limit regression test
   - penalty/flexibility behavior
@@ -213,8 +223,10 @@ labels in advance.
 
 ### P4 — real-data FS0610 study
 
-Create a sibling of `scripts/run_pmf_fs0610.py` that uses the exact same input
-cleaning/alignment but fits the new model and exports:
+The initial real-data runner and selection protocol now exist in the feature
+worktree. `scripts/run_distributional_k_sweep.py` uses one common cleaned
+matrix, uncertainty matrix, observed-cell mask, and held-out mask across the
+Static and V2 fits. It exports:
 
 - global archetypes;
 - local profiles;
@@ -222,6 +234,9 @@ cleaning/alignment but fits the new model and exports:
 - profile SD / RMS variability;
 - static-vs-flexible comparison;
 - factor stability across random seeds.
+
+The remaining scientific work is to run the full K/seed grid and interpret it;
+the runner does not automatically select a winning factor count.
 
 ### P5 — full posterior and acceleration
 

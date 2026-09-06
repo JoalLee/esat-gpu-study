@@ -58,3 +58,15 @@ class TestLSNMF:
                 decreasing = False
             q_h = q_i
         assert decreasing
+
+    def test_zero_weight_rows_remain_finite_and_unchanged(self):
+        V = np.array([[0.0, 0.0], [1.0, 2.0]], dtype=float)
+        We = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=float)
+        W = np.array([[0.7], [1.2]], dtype=float)
+        H = np.array([[0.4, 0.6]], dtype=float)
+
+        updated_W, updated_H = LSNMF.update(V=V, We=We, W=W, H=H)
+
+        assert np.isfinite(updated_W).all()
+        assert np.isfinite(updated_H).all()
+        np.testing.assert_allclose(updated_W[0], W[0])
