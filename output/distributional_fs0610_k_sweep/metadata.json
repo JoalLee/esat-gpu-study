@@ -1,0 +1,98 @@
+{
+  "git_commit": "7411773",
+  "species_path": "/Users/joallee/Project/esat-gpu-study-distributional/data/PMF_data/species_FS0610.csv",
+  "uncertainty_path": "/Users/joallee/Project/esat-gpu-study-distributional/data/PMF_data/unc_FS0610.csv",
+  "output_dir": "/Users/joallee/Project/esat-gpu-study-distributional/output/distributional_fs0610_k_sweep",
+  "protocol": {
+    "models": [
+      "static",
+      "lowrank_v2"
+    ],
+    "factors": [
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "seeds": [
+      11,
+      17,
+      23,
+      31,
+      41,
+      53,
+      67,
+      79,
+      97,
+      113
+    ],
+    "same_holdout_mask_for_all_runs": true,
+    "holdout_seed": 20260906,
+    "holdout_fraction_requested": 0.1,
+    "holdout_fraction_realized": 0.1001412410849764,
+    "drop_all_missing_rows": true,
+    "automatic_model_or_factor_selection": false
+  },
+  "shape": {
+    "samples": 8671,
+    "features": 32,
+    "observed_cells": 228687,
+    "fit_cells": 205786,
+    "holdout_cells": 22901
+  },
+  "parameters": {
+    "static_max_iter": 500,
+    "init_iter": 250,
+    "max_iter": 15,
+    "profile_steps": 5,
+    "tol": 1e-06,
+    "v2_variability_rank": 2,
+    "v2_profile_penalty": 0.005,
+    "v2_family_penalty": 0.0,
+    "v2_sv_shrinkage": 0.5,
+    "variability_threshold": 1e-05,
+    "missing_sentinel": -900.0,
+    "missing_uncertainty_scale": 4.0
+  },
+  "cleaning": {
+    "input_rows": 8760,
+    "selected_rows": 8760,
+    "start_row": 0,
+    "row_step": 1,
+    "max_rows": null,
+    "features": 32,
+    "missing_sentinel": -900.0,
+    "missing_uncertainty_scale": 4.0,
+    "sentinel_missing_cells": 51633,
+    "negative_non_sentinel_cells": 0,
+    "invalid_uncertainty_cells": 449,
+    "observed_cells": 228687,
+    "missing_cells": 51633,
+    "observed_fraction": 0.8158069349315068,
+    "all_missing_rows": 89,
+    "all_missing_features": 0,
+    "time_parse_failures": 0,
+    "clean_data_min": 0.0,
+    "clean_data_max": 77.351841,
+    "clean_uncertainty_min": 3.9e-05,
+    "clean_uncertainty_max": 45.51036,
+    "rows_before_all_missing_drop": 8760,
+    "dropped_all_missing_rows": 89,
+    "selected_rows_after_all_missing_drop": 8671,
+    "all_missing_rows_after_drop": 0
+  },
+  "counts": {
+    "runs": 100,
+    "stability_rows": 100,
+    "diagnostic_rows": 600,
+    "summary_rows": 10
+  },
+  "outputs": {
+    "runs": "k_sweep_runs.csv",
+    "stability": "k_sweep_stability.csv",
+    "diagnostics": "k_sweep_diagnostics.csv",
+    "summary": "k_sweep_summary.csv",
+    "holdout_masks": "holdout_masks.npz"
+  }
+}
